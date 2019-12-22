@@ -1,0 +1,56 @@
+(set-logic BV)
+
+(synth-fun INV 
+   ((base (_ BitVec 2))
+    (addr (_ BitVec 2))
+    (cnt (_ BitVec 2))
+   ) 
+   Bool
+  (
+    (Start Bool (Conj))
+    (Conj Bool (Disj 
+                (and Disj Conj)))
+    (Disj Bool (Literal 
+                (and Literal Disj)))
+    (Literal Bool (Atom
+                (not Atom)))
+    (Atom Bool ((= V2 V2)))
+    (V2 (_ BitVec 2) (base addr cnt C2))
+    (C2 (_ BitVec 2) (#b00 #b01 #b10 #b11))
+   ))
+
+(constraint (not (INV #b10 #b00 #b00)))
+(constraint (not (INV #b00 #b10 #b01)))
+(constraint (not (INV #b00 #b10 #b00)))
+(constraint (not (INV #b00 #b00 #b10)))
+
+
+(define-fun Init ((base (_ BitVec 2)) (addr (_ BitVec 2)) (cnt (_ BitVec 2)) (input (_ BitVec 2)) (en Bool)) Bool
+  (and (= base #b00) (= addr #b00) (= cnt #b00)))
+  
+(define-fun Tr (
+  (base (_ BitVec 2)) (addr (_ BitVec 2)) (cnt (_ BitVec 2)) (input (_ BitVec 2)) (en Bool)
+  (basePrime (_ BitVec 2)) (addrPrime (_ BitVec 2)) (cntPrime (_ BitVec 2)) (inputPrime (_ BitVec 2)) (enPrime Bool)
+  ) Bool
+  (and 
+    (= basePrime (ite en input base)) 
+    (= addrPrime (ite en input (bvadd addr #b01))) 
+    (= cntPrime  (ite en #b00  (bvadd cnt #b01))))
+)
+
+(declare-var enV Bool)
+(declare-var inputV (_ BitVec 2))
+(declare-var baseV (_ BitVec 2))
+(declare-var addrV (_ BitVec 2))
+(declare-var cntV  (_ BitVec 2))
+(declare-var enP Bool)
+(declare-var inputP (_ BitVec 2))
+(declare-var baseP (_ BitVec 2))
+(declare-var addrP (_ BitVec 2))
+(declare-var cntP  (_ BitVec 2))
+
+(constraint (=> (and (Init baseV addrV cntV inputV enV) (Tr baseV addrV cntV inputV enV baseP addrP cntP inputP enP)) (INV baseP addrP cntP)))
+
+(check-synth)
+
+
