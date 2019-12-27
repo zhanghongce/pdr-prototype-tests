@@ -6,8 +6,9 @@ import heapq
 
 class TransitionSystem(object):
     """Trivial representation of a Transition System."""
-    def __init__(self, variables, init, trans):
+    def __init__(self, variables, prime_variables, init, trans):
         self.variables = variables
+        self.prime_variables = 
         self.init = init
         self.trans = trans # T -> 
 
@@ -34,6 +35,7 @@ class BaseAddrCnt(TransitionSystem):
 
 
         variables = [base, addr, cnt, inp, lden]
+        prime_variables = [next_var(v) for v in variables]
         init = base.Equals(0) & addr.Equals(0) & cnt.Equals(0)
         trans= next_var(base).Equals( \
             Ite(lden.Equals(1), inp, base  )) & \
@@ -42,7 +44,10 @@ class BaseAddrCnt(TransitionSystem):
             next_var(cnt).Equals( \
             Ite(lden.Equals(1), BV(0, nbits), BVAdd(cnt, BV(1, nbits) ) ))
             
-        TransitionSystem.__init__(self, variables = variables, init = init, trans = trans )
+        TransitionSystem.__init__(self, \
+          variables = variables, \
+          prime_variables = prime_variables, \
+          init = init, trans = trans )
 
     def neq_property(self, base, addr, cnt):
         addr = addr & self.mask
@@ -118,6 +123,9 @@ class PDR(object):
                     if fidx-1 not in self.unblockable_fact:
                         self.unblockable_fact[fidx-1] = []
                     self.unblockable_fact[fidx-1].append(ex)
+            
+                    # Question:  lemma (for each lemma control the sygus upper bound, expr size, trial no)
+
                     # get the variable of ex
                     # get the operators of lemma
                     # get the unblockable fact of these variables

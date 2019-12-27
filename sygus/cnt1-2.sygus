@@ -11,7 +11,7 @@
     (Conj Bool (Disj 
                 (and Disj Conj)))
     (Disj Bool (Literal 
-                (and Literal Disj)))
+                (or Literal Disj)))
     (Literal Bool (Atom
                 (not Atom)))
     (Atom Bool ((= E2 E2)))

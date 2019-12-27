@@ -1,0 +1,38 @@
+(set-logic BV)
+
+(synth-fun INV 
+   ((base (_ BitVec 2))
+    (addr (_ BitVec 2))
+    (cnt (_ BitVec 2))
+   ) 
+   Bool
+  (
+    (Start Bool (Conj))
+    (Conj Bool (Disj 
+                (and Disj Conj)))
+    (Disj Bool (Literal 
+                (and Literal Disj)))
+    (Literal Bool (Atom
+                (not Atom)))
+    (Atom Bool ((= E2 E2)))
+    (E2 (_ BitVec 2) (V2 (bvadd E2 E2)))
+    (V2 (_ BitVec 2) (base addr cnt C2 V2))
+    (C2 (_ BitVec 2) (#b00 #b01 #b10 #b11))
+   ))
+
+(constraint (not (INV #b10 #b00 #b00)))
+(constraint (not (INV #b00 #b10 #b01)))
+(constraint (not (INV #b00 #b10 #b00)))
+(constraint (not (INV #b00 #b00 #b10)))
+(constraint (INV #b00 #b00 #b10))
+(constraint (INV #b11 #b11 #b00)) ; 
+(constraint (INV #b00 #b00 #b00)) ; add 1
+(constraint (INV #b00 #b01 #b01)) ; add 2
+
+; after adding 2 
+;~/cvc-installs/latest/bin/cvc4 --lang=sygus cnt1-2-no-c.sygus 
+;unknown
+
+(check-synth)
+
+
