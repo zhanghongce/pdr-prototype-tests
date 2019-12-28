@@ -1,14 +1,15 @@
-from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV
+from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV, EqualsOrIff
 from pysmt.shortcuts import is_sat, is_unsat, Solver, TRUE
 from pysmt.typing import BOOL, BVType
-from pysmt.solvers.interpolation import Interpolator
+from pysmt.shortcuts import Interpolator
+from pysmt.logics import QF_BV
 import heapq
 
 class TransitionSystem(object):
     """Trivial representation of a Transition System."""
     def __init__(self, variables, prime_variables, init, trans):
         self.variables = variables
-        self.prime_variables = 
+        self.prime_variables = prime_variables
         self.init = init
         self.trans = trans # T -> 
 
@@ -65,6 +66,7 @@ class PDR(object):
         self.system = system
         self.frames = [ [system.init], []  ] # list of list of clauses
         self.solver = Solver()
+        self.itp_solver = Interpolator(logic=QF_BV)
         self.prime_map = dict([(v, next_var(v)) for v in self.system.variables])
         self.primal_map = dict([(next_var(v), v) for v in self.system.variables])
         self.cexs_blocked = {}  # <n, cex> : n -> list of cex, maybe blocked already
@@ -73,7 +75,7 @@ class PDR(object):
 
     def check_property(self, prop, remove_vars = [], keep_vars = None):
         """Property Directed Reachability approach without optimizations."""
-        print("Checking property %s..." % prop)
+        print("Checking property %s." % prop)
 
         while True:
             self.sanity_check_frame_monotone()
@@ -81,6 +83,7 @@ class PDR(object):
             # frame[-1] /\ T -> not (prop)
             cube = self.get_bad_state_from_property_invalid_after_trans(prop, -1, remove_vars, keep_vars)
 
+            print ('Get cube: ', cube , ' @F%d' % (len(self.frames)-1))
             # cube is list of (var, assignments)
             if cube is not None:
                 # Blocking phase of a bad state
@@ -88,7 +91,7 @@ class PDR(object):
                     print("--> Bug found at step %d" % (len(self.frames)))
                     break
                 else:
-                    print("   [PDR] Cube blocked '%s'" % str(cube))
+                    print("   [PDR] Cube blocked '%s'" % self.print_cube(cube))
             else:
                 # Checking if the last two frames are equivalent i.e., are inductive
                 if self.is_last_two_frames_inductive():
@@ -105,16 +108,21 @@ class PDR(object):
     def push_lemma_from_last_frame(self, remove_vars, keep_vars):
         # push cex_blocked ?
         fidx = len(self.frames)-1 # the last frame
+        print ('Try pushing lemma F%d -> F%d ' % (fidx-1, fidx))
         for cex in self.cexs_blocked[fidx-1]:
             if self.recursive_block(cex, fidx, remove_vars, keep_vars):
-                self.cexs_blocked[-1].append(cex)
+                self.cexs_blocked[fidx].append(cex)
+        print ('cexs[%d]' % fidx , self.cexs_blocked[fidx])  # has repeated cexs ??/ BUG
+        assert (False)
         # push itp ?
         lemmas_to_try = self.frames[fidx-1][:] # make a copy
         for lemma in lemmas_to_try:
             #F[fidx-1] /\ T => lemma ?
+            print ('Try pushing lemma to F%d: ' % fidx , str(lemma))
             ex = self.get_bad_state_from_property_invalid_after_trans(lemma, fidx-1, remove_vars, keep_vars )
             if ex is None: # no bad state, lemma is still valid
                 self.frames[fidx].append(lemma)
+                print ('Succeed!')
             else:
                 if self.recursive_block(ex, fidx-1, remove_vars, keep_vars ):
                     lemmas_to_try.append(lemma)
@@ -123,7 +131,7 @@ class PDR(object):
                     if fidx-1 not in self.unblockable_fact:
                         self.unblockable_fact[fidx-1] = []
                     self.unblockable_fact[fidx-1].append(ex)
-            
+                    print ('fail due to fact' , self.print_cube(ex))
                     # Question:  lemma (for each lemma control the sygus upper bound, expr size, trial no)
 
                     # get the variable of ex
@@ -149,7 +157,6 @@ class PDR(object):
                     # try push this INV?
                     # threshold in construction ? grammar may be not enough?
 
-        pass
 
 
 
@@ -157,7 +164,7 @@ class PDR(object):
     def is_last_two_frames_inductive(self):
         """Checks if last two frames are equivalent (no need to change variable to prime)"""
         if len(self.frames) > 1 and \
-             self.solve(Not(Implies(self.frames[-1], self.frames[-2]))) is None:
+             self.solve(Not(Implies(And(self.frames[-1]), And(self.frames[-2]) ))) is None:
                 return True
         return False
 
@@ -193,11 +200,12 @@ class PDR(object):
     # you may want to have the interpolant here
     def solveTrans(self, prevF, T, prop , variables, remove_vars = [], keep_vars = None, findItp = False):
         # prevF /\ T(p, prime) --> not prop, if sat
-        if self.solver.solve( prevF + T + Not( prop.substitute(self.prime_map)) ) is None:
-            model = self.solver.get_model():
+        print (prevF + [T, Not( prop.substitute(self.prime_map))])
+        if self.solver.solve( prevF + [T, Not( prop.substitute(self.prime_map))] ):
+            model = self.solver.get_model()
             retL = []
             for v, val in model:
-                if v is not in variables: # if it is prime variable
+                if v not in variables: # if it is prime variable
                     continue # ignore it
                 if v in remove_vars:
                     continue
@@ -209,9 +217,10 @@ class PDR(object):
             return retL, None
         Itp = None
         if findItp:
-            Itp = Interpolator.binary_interpolant( And(prevF + T), Not( prop.substitute(self.prime_map)) )
+            Itp = self.itp_solver.binary_interpolant( a = And(prevF + [T]), b= Not( prop.substitute(self.prime_map)) )
             Itp = And(Itp)
-            Itp = substitute(Itp, primal_map)
+            Itp = Itp.substitute(self.primal_map)
+            print ('get itp: ', str(Itp))
         return None, Itp
 
 
@@ -222,7 +231,7 @@ class PDR(object):
     def sanity_check_frame_monotone(self):
         assert (len(self.frames) > 1)
         for fidx in range(1,len(self.frames)):
-            model = self.solve(Not(Implies(And(self.frames[fidx-1]), And(self.frames[fidx])))):
+            model = self.solve(Not(Implies(And(self.frames[fidx-1]), And(self.frames[fidx]))))
             if model is not None:
                 self.dump_model(model)
                 print ('Bug, not monotone, F%d -> F%d' % (fidx-1, fidx))
@@ -231,14 +240,19 @@ class PDR(object):
     def dump_model(self, model):
         print (model)
 
+    @staticmethod
+    def print_cube(c):
+        return ( '(' + ( ' && '.join([v.symbol_name() + ' = ' + str(val) for v, val in c]) ) + ')'  ) 
+
 
     # ---------------------------------------------------------------------------------
                 
     def recursive_block(self, cube, idx, remove_vars = [], keep_vars = None):
         priorityQueue = []
+        print ('recursive_block@F%d' % idx, self.print_cube(cube) )
         heapq.heappush(priorityQueue, (idx, cube))
         while len(priorityQueue) > 0:
-            fidx, cex = heapq.nsmallest(1, priorityQueue)
+            fidx, cex = heapq.nsmallest(1, priorityQueue)[0]
 
             if fidx == 0:
                 model_init_frame = self.solve( \
@@ -251,7 +265,7 @@ class PDR(object):
             
             # Question: too old itp? useful or not?
             # push on older frames also? for new ITP?
-
+            print ('check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
             model, itp = self.solveTrans(self.frames[fidx-1], \
                 T = self.system.trans, prop = prop, \
                 variables = self.system.variables, \
@@ -270,25 +284,17 @@ class PDR(object):
         # TODO: 
         return True
 
-
-
-
-
-    def inductive(self):
-        """Checks if last two frames are equivalent """
-        if len(self.frames) > 1 and \
-             self.solve(Not(EqualsOrIff(self.frames[-1], self.frames[-2]))) is None:
-                return True
-        return False
-
         # for the CTG, see if we can block it or not?
 
 
 
+def test_naive_pdr():
+    width = 4
+    cnt = BaseAddrCnt(width)
+    prop = cnt.neq_property(1 << (width-1),1,1)
+    pdr = PDR(cnt)
+    pdr.check_property(prop)
 
 
 if __name__ == '__main__':
-    width = 4
-    e = BaseAddrCnt(width)
-    print (e.trans.serialize())
-    print (e.neq_property(1 << (width-1),1,1))
+    test_naive_pdr()
