@@ -111,9 +111,10 @@ class PDR(object):
         print ('Try pushing lemma F%d -> F%d ' % (fidx-1, fidx))
         for cex in self.cexs_blocked[fidx-1]:
             if self.recursive_block(cex, fidx, remove_vars, keep_vars):
-                self.cexs_blocked[fidx].append(cex)
+                print ('cex is pushed: ', self.print_cube(cex))
+                #self.cexs_blocked[fidx].append(cex)
         print ('cexs[%d]' % fidx , self.cexs_blocked[fidx])  # has repeated cexs ??/ BUG
-        assert (False)
+        
         # push itp ?
         lemmas_to_try = self.frames[fidx-1][:] # make a copy
         for lemma in lemmas_to_try:
@@ -132,6 +133,10 @@ class PDR(object):
                         self.unblockable_fact[fidx-1] = []
                     self.unblockable_fact[fidx-1].append(ex)
                     print ('fail due to fact' , self.print_cube(ex))
+
+        # try new lemmas ? 
+        print ('push lemma finished, press any key to continue')
+        input()
                     # Question:  lemma (for each lemma control the sygus upper bound, expr size, trial no)
 
                     # get the variable of ex
@@ -220,7 +225,8 @@ class PDR(object):
             Itp = self.itp_solver.binary_interpolant( a = And(prevF + [T]), b= Not( prop.substitute(self.prime_map)) )
             Itp = And(Itp)
             Itp = Itp.substitute(self.primal_map)
-            print ('get itp: ', str(Itp))
+            print ('get itp: ', Itp.serialize())
+            input()
         return None, Itp
 
 
@@ -249,7 +255,7 @@ class PDR(object):
                 
     def recursive_block(self, cube, idx, remove_vars = [], keep_vars = None):
         priorityQueue = []
-        print ('recursive_block@F%d' % idx, self.print_cube(cube) )
+        print ('Try recursive_block@F%d' % idx, self.print_cube(cube) )
         heapq.heappush(priorityQueue, (idx, cube))
         while len(priorityQueue) > 0:
             fidx, cex = heapq.nsmallest(1, priorityQueue)[0]
@@ -258,7 +264,7 @@ class PDR(object):
                 model_init_frame = self.solve( \
                     And([self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]))
                 assert (model_init_frame is not None)
-                print ('CEX found!')
+                print ('recursive_block: CEX found!')
                 return False
 
             prop = Not(And([EqualsOrIff(v,val) for v,val in cex]))
@@ -276,12 +282,16 @@ class PDR(object):
                 if fidx not in self.cexs_blocked:
                     self.cexs_blocked[fidx] = []
                 self.cexs_blocked[fidx].append(cex)
+                print ('All frames:', self.frames)
+                print ('CEX blocked:', self.cexs_blocked)
                 heapq.heappop(priorityQueue) # pop this cex
 
             else:
                 # model is not None
-                heapq.heappush(priorityQueue, (fidx-1, cex))
+                print ('push to queue, F%d' % (fidx-1), self.print_cube(model))
+                heapq.heappush(priorityQueue, (fidx-1, model))
         # TODO: 
+        print ('recursive_block Succeed, return.')
         return True
 
         # for the CTG, see if we can block it or not?
