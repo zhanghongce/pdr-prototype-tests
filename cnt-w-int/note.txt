@@ -1,0 +1,3 @@
+cnt.smt2 not able to solve in 60mins
+
+77min unsolved for bv
