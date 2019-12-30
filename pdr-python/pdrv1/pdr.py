@@ -17,6 +17,9 @@ def next_var(v):
     """Returns the 'next' of the given variable"""
     return Symbol("%s_prime" % v.symbol_name(), v.symbol_type())
 
+Config_Max_Frame = 10000000
+
+
 class BaseAddrCnt(TransitionSystem):
     def __init__(self, nbits):
         self.nbits = nbits # save the number of bits
@@ -75,53 +78,83 @@ class PDR(object):
 
         self.cexs_pushed_idxs_map = {} # n->idx+1 tried
         self.frames_pushed_idxs_map = {} # n->idx+1 tried
-        self.min_cex_frames_changed = None
+        self.min_cex_frames_changed = Config_Max_Frame
         # map: v --> next_v
+
+    def dump_frames(self):
+        print ('---------- Frames DUMP ----------')
+        for fidx,f in enumerate(self.frames):
+            print ('Frame : %d'%fidx)
+            for lidx, lemma in enumerate(f):
+                ptr = '*' if self.frames_pushed_idxs_map.get(fidx,0) == lidx else ' '
+                print ('  %s l%d: ' % (ptr,lidx) , lemma.serialize())
+            if self.frames_pushed_idxs_map.get(fidx,0) == lidx + 1:
+                print ('    all tried to push')
+
+            if fidx in self.cexs_blocked:
+                print ('  CEX blocked # : %d'% len(self.cexs_blocked[fidx]) )
+                for cidx, cex in enumerate(self.cexs_blocked[fidx]):
+                    ptr = '*' if self.cexs_pushed_idxs_map.get(fidx,0) == cidx else ' '
+                    print ('  %s c%d: ' % (ptr, cidx), self.print_cube(cex) )
+                if self.cexs_pushed_idxs_map.get(fidx,0) == lidx + 1:
+                    print ('    all tried to push')
+            if fidx in self.unblockable_fact:
+                print ('  facts # : %d'% len(self.unblockable_fact[fidx]) )
+                for cidx, fact in enumerate(self.unblockable_fact[fidx]):
+                    print ('    f%d: ' % cidx, self.print_cube(fact) )
+        print ('---------- END Frames DUMP ----------')
+
+
+
 
     def check_property(self, prop, remove_vars = [], keep_vars = None):
         """Property Directed Reachability approach without optimizations."""
-        print("Checking property %s." % prop)
+        print("[Checking property] Property: %s." % prop)
 
         while True:
             self.sanity_check_frame_monotone()
+            self.dump_frames()
 
             # frame[-1] /\ T -> not (prop)
             cube = self.get_bad_state_from_property_invalid_after_trans(prop, -1, remove_vars, keep_vars)
 
-            print ('Get cube: ', cube , ' @F%d' % (len(self.frames)-1))
+            print ('[Checking property] Get cube: ', cube , ' @F%d' % (len(self.frames)-1))
             # cube is list of (var, assignments)
             if cube is not None:
                 # Blocking phase of a bad state
                 if not self.recursive_block(cube, len(self.frames)-1, remove_vars, keep_vars ):
-                    print("--> Bug found at step %d" % (len(self.frames)))
+                    print("[Checking property] Bug found at step %d" % (len(self.frames)))
                     break
                 else:
-                    print("   [PDR] Cube blocked '%s'" % self.print_cube(cube))
+                    print("[Checking property] Cube blocked '%s'" % self.print_cube(cube))
             else:
                 # Checking if the last two frames are equivalent i.e., are inductive
                 if self.is_last_two_frames_inductive():
-                    print("--> The system is safe, frame : %d" % len(self.frames) )
+                    print("[Checking property] The system is safe, frame : %d" % len(self.frames) )
                     break
                 else:
-                    print("   [PDR] Adding frame %d..." % (len(self.frames)))
+                    print("[Checking property] Adding frame %d..." % (len(self.frames)))
                     self.frames.append([])
-                    self.push_lemma_from_last_frame(remove_vars, keep_vars) # TODO
+                    self.push_lemma_from_the_lowest_frame(remove_vars, keep_vars) # TODO
                     # you should try to push existing clauses
     
     # TODO: problem : INIT -> next frame ????
     # put too few in the      
     def push_lemma_from_the_lowest_frame(self, remove_vars, keep_vars):
-        if self.min_cex_frames_changed is None:
+        if self.min_cex_frames_changed == Config_Max_Frame:
             self.min_cex_frames_changed = 1
         start_frame = self.min_cex_frames_changed
         # do not push from the initial frame
+        print ('[pushes] F%d to F%d' % (start_frame, len(self.frames)-2))
+        self.min_cex_frames_changed = len(self.frames)-1
         for fidx in range(start_frame, len(self.frames)-1):
             self.push_lemma_from_frame(fidx, remove_vars, keep_vars)
+
 
     def push_lemma_from_frame(self, fidx, remove_vars, keep_vars):
         assert (len(self.frames) > fidx+1)
         if (fidx not in self.cexs_blocked): # else no cex to push
-            print ('<WARN> no cex to push from F%d'%fidx)
+            print ('  [push_lemma from F%d] <WARN> no cex to push from F%d'%(fidx,fidx))
             input ()
         assert (fidx in self.cexs_blocked)
         
@@ -129,27 +162,30 @@ class PDR(object):
         end_cex_idx    = len(self.cexs_blocked[fidx])
 
         for cexIdx in range(start_cexs_idx,end_cex_idx):
+            cex = self.cexs_blocked[fidx][cexIdx]
+            print ('  [push_lemma F%d] cex to try: c%d :'%(fidx, cexIdx), self.print_cube(cex))
             if self.recursive_block(cex, fidx+1, remove_vars, keep_vars):
-                print ('cex is pushed: ', self.print_cube(cex))
+                print ('  [push_lemma F%d] cex is pushed: '%fidx, self.print_cube(cex))
         self.cexs_pushed_idxs_map[fidx] =  end_cex_idx # we will push all the cexs at the early time
 
         # if len(self.cexs_blocked[fidx]) > end_cex_idx: there are now more cexs to try pushing
         # there could be more cexs to push (we can decide if we want to add a loop here)
 
         start_lemma_idx = self.frames_pushed_idxs_map.get(fidx, 0)
-        end_lemma_idx   = len(self.frames) # we can decide if we want to update this
+        end_lemma_idx   = len(self.frames[fidx]) # we can decide if we want to update this
         lemmaIdx = start_lemma_idx
         while lemmaIdx != end_lemma_idx:
             lemma = self.frames[fidx][lemmaIdx]
-            print ('Try pushing lemma to F%d: ' % (fidx+1) , (lemma.serialize()))
+            print ('  [push_lemma F%d] Try pushing lemma l%d to F%d: ' % (fidx, lemmaIdx, fidx+1) , (lemma.serialize()))
             ex = self.get_bad_state_from_property_invalid_after_trans(lemma, fidx, remove_vars, keep_vars )
 
             if ex is None: # no bad state, lemma is still valid
                 self.frames[fidx+1].append(lemma)
                 self.min_cex_frames_changed = min(fidx+1,self.min_cex_frames_changed)
-                print ('Succeed in pushing!')
+                print ('  [push_lemma F%d] Succeed in pushing!'%fidx)
                 lemmaIdx += 1 # try next one
             else:
+                print ('  [push_lemma F%d] find cex@F%d : %s' % (fidx, fidx, self.print_cube(ex)))
                 if self.recursive_block(ex, fidx, remove_vars, keep_vars ):
                     #lemmas_to_try.append(lemma)
                     continue # retry in the next round
@@ -158,7 +194,7 @@ class PDR(object):
                     if fidx not in self.unblockable_fact:
                         self.unblockable_fact[fidx] = []
                     self.unblockable_fact[fidx].append(ex)
-                    print ('fail due to fact' , self.print_cube(ex))
+                    print ('  [push_lemma F%d] fail due to fact'%fidx , self.print_cube(ex))
                     lemmaIdx+= 1
 
             # end_lemma_idx = len(self.frames) # should we do this or not?
@@ -166,7 +202,7 @@ class PDR(object):
         self.frames_pushed_idxs_map[fidx] =  end_lemma_idx
         # if len(self.frames[fidx]) > end_lemma_idx : we have unpushed lemmas
         # how hard to try?
-        print ('push lemma finished, press any key to continue')
+        print ('  [push_lemma F%d] push lemma finished, press any key to continue'%fidx)
         input()
 
         # try new lemmas ? 
@@ -210,6 +246,7 @@ class PDR(object):
     def get_bad_state_from_property_invalid_after_trans(self, prop, idx, remove_vars = [], keep_vars = None):
         """Extracts a reachable state that intersects the negation
         of the property and the last current frame"""
+        print ('    [F%d -> prop]' % idx)
         md, _ = self.solveTrans(self.frames[idx], \
             T = self.system.trans, prop = prop, \
             variables = self.system.variables, \
@@ -239,7 +276,10 @@ class PDR(object):
     # you may want to have the interpolant here
     def solveTrans(self, prevF, T, prop , variables, remove_vars = [], keep_vars = None, findItp = False):
         # prevF /\ T(p, prime) --> not prop, if sat
-        print (prevF + [T, Not( prop.substitute(self.prime_map))])
+        print ('      [solveTrans] Property:', prop.serialize())
+        print ('      [solveTrans] var will => prime')
+        print ('      [solveTrans] prevF:', prevF)
+
         if self.solver.solve( prevF + [T, Not( prop.substitute(self.prime_map))] ):
             model = self.solver.get_model()
             retL = []
@@ -259,7 +299,7 @@ class PDR(object):
             Itp = self.itp_solver.binary_interpolant( a = And(prevF + [T]), b= Not( prop.substitute(self.prime_map)) )
             Itp = And(Itp)
             Itp = Itp.substitute(self.primal_map)
-            print ('get itp: ', Itp.serialize())
+            print ('    [solveTrans] get itp: ', Itp.serialize())
             input()
         return None, Itp
 
@@ -289,7 +329,7 @@ class PDR(object):
                 
     def recursive_block(self, cube, idx, remove_vars = [], keep_vars = None):
         priorityQueue = []
-        print ('Try recursive_block@F%d' % idx, self.print_cube(cube) )
+        print ('      [block] Try @F%d' % idx, self.print_cube(cube) )
         heapq.heappush(priorityQueue, (idx, cube))
         while len(priorityQueue) > 0:
             fidx, cex = heapq.nsmallest(1, priorityQueue)[0]
@@ -298,14 +338,14 @@ class PDR(object):
                 model_init_frame = self.solve( \
                     And([self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]))
                 assert (model_init_frame is not None)
-                print ('recursive_block: CEX found!')
+                print ('      [block] CEX found!')
                 return False
 
             prop = Not(And([EqualsOrIff(v,val) for v,val in cex]))
             
             # Question: too old itp? useful or not?
             # push on older frames also? for new ITP?
-            print ('check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
+            print ('      [block] check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
             model, itp = self.solveTrans(self.frames[fidx-1], \
                 T = self.system.trans, prop = prop, \
                 variables = self.system.variables, \
@@ -315,23 +355,20 @@ class PDR(object):
                 self.frames[fidx].append(itp)
                 if fidx not in self.cexs_blocked:
                     self.cexs_blocked[fidx] = []
-                    self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
-                    
+                self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
+
                 self.cexs_blocked[fidx].append(cex)
-                print ('All frames:', self.frames)
-                print ('CEX blocked:', self.cexs_blocked)
                 heapq.heappop(priorityQueue) # pop this cex
 
             else:
                 # model is not None
-                print ('push to queue, F%d' % (fidx-1), self.print_cube(model))
+                print ('      [block] push to queue, F%d' % (fidx-1), self.print_cube(model))
                 heapq.heappush(priorityQueue, (fidx-1, model))
         # TODO: 
-        print ('recursive_block Succeed, return.')
+        print ('      [block] Succeed, return.')
         return True
 
         # for the CTG, see if we can block it or not?
-
 
 
 def test_naive_pdr():
