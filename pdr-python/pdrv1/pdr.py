@@ -197,6 +197,10 @@ class PDR(object):
                     print ('  [push_lemma F%d] fail due to fact'%fidx , self.print_cube(ex))
                     lemmaIdx+= 1
 
+                    self.dump_frames()
+                    print ('  [push_lemma F%d] Should invoke SyGuS here ... ' % fidx)
+                    input()
+
             # end_lemma_idx = len(self.frames) # should we do this or not?
 
         self.frames_pushed_idxs_map[fidx] =  end_lemma_idx
