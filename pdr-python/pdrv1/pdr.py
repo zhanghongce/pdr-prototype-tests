@@ -71,6 +71,11 @@ class PDR(object):
         self.primal_map = dict([(next_var(v), v) for v in self.system.variables])
         self.cexs_blocked = {}  # <n, cex> : n -> list of cex, maybe blocked already
         self.unblockable_fact = {} # <n, ex> : n -> list of ex, unblocked, used to syn
+
+
+        self.cexs_pushed_idxs_map = {} # n->idx+1 tried
+        self.frames_pushed_idxs_map = {} # n->idx+1 tried
+        self.min_cex_frames_changed = None
         # map: v --> next_v
 
     def check_property(self, prop, remove_vars = [], keep_vars = None):
@@ -104,39 +109,68 @@ class PDR(object):
                     # you should try to push existing clauses
     
     # TODO: problem : INIT -> next frame ????
-    # put too few in the          
-    def push_lemma_from_last_frame(self, remove_vars, keep_vars):
-        # push cex_blocked ?
-        fidx = len(self.frames)-1 # the last frame
-        print ('Try pushing lemma F%d -> F%d ' % (fidx-1, fidx))
-        for cex in self.cexs_blocked[fidx-1]:
-            if self.recursive_block(cex, fidx, remove_vars, keep_vars):
-                print ('cex is pushed: ', self.print_cube(cex))
-                #self.cexs_blocked[fidx].append(cex)
-        print ('cexs[%d]' % fidx , self.cexs_blocked[fidx])  # has repeated cexs ??/ BUG
+    # put too few in the      
+    def push_lemma_from_the_lowest_frame(self, remove_vars, keep_vars):
+        if self.min_cex_frames_changed is None:
+            self.min_cex_frames_changed = 1
+        start_frame = self.min_cex_frames_changed
+        # do not push from the initial frame
+        for fidx in range(start_frame, len(self.frames)-1):
+            self.push_lemma_from_frame(fidx, remove_vars, keep_vars)
+
+    def push_lemma_from_frame(self, fidx, remove_vars, keep_vars):
+        assert (len(self.frames) > fidx+1)
+        if (fidx not in self.cexs_blocked): # else no cex to push
+            print ('<WARN> no cex to push from F%d'%fidx)
+            input ()
+        assert (fidx in self.cexs_blocked)
         
-        # push itp ?
-        lemmas_to_try = self.frames[fidx-1][:] # make a copy
-        for lemma in lemmas_to_try:
-            #F[fidx-1] /\ T => lemma ?
-            print ('Try pushing lemma to F%d: ' % fidx , str(lemma))
-            ex = self.get_bad_state_from_property_invalid_after_trans(lemma, fidx-1, remove_vars, keep_vars )
+        start_cexs_idx = self.cexs_pushed_idxs_map.get(fidx,0)
+        end_cex_idx    = len(self.cexs_blocked[fidx])
+
+        for cexIdx in range(start_cexs_idx,end_cex_idx):
+            if self.recursive_block(cex, fidx+1, remove_vars, keep_vars):
+                print ('cex is pushed: ', self.print_cube(cex))
+        self.cexs_pushed_idxs_map[fidx] =  end_cex_idx # we will push all the cexs at the early time
+
+        # if len(self.cexs_blocked[fidx]) > end_cex_idx: there are now more cexs to try pushing
+        # there could be more cexs to push (we can decide if we want to add a loop here)
+
+        start_lemma_idx = self.frames_pushed_idxs_map.get(fidx, 0)
+        end_lemma_idx   = len(self.frames) # we can decide if we want to update this
+        lemmaIdx = start_lemma_idx
+        while lemmaIdx != end_lemma_idx:
+            lemma = self.frames[fidx][lemmaIdx]
+            print ('Try pushing lemma to F%d: ' % (fidx+1) , (lemma.serialize()))
+            ex = self.get_bad_state_from_property_invalid_after_trans(lemma, fidx, remove_vars, keep_vars )
+
             if ex is None: # no bad state, lemma is still valid
-                self.frames[fidx].append(lemma)
-                print ('Succeed!')
+                self.frames[fidx+1].append(lemma)
+                self.min_cex_frames_changed = min(fidx+1,self.min_cex_frames_changed)
+                print ('Succeed in pushing!')
+                lemmaIdx += 1 # try next one
             else:
-                if self.recursive_block(ex, fidx-1, remove_vars, keep_vars ):
-                    lemmas_to_try.append(lemma)
+                if self.recursive_block(ex, fidx, remove_vars, keep_vars ):
+                    #lemmas_to_try.append(lemma)
+                    continue # retry in the next round
                     # if blocked so what? retry
                 else:
-                    if fidx-1 not in self.unblockable_fact:
-                        self.unblockable_fact[fidx-1] = []
-                    self.unblockable_fact[fidx-1].append(ex)
+                    if fidx not in self.unblockable_fact:
+                        self.unblockable_fact[fidx] = []
+                    self.unblockable_fact[fidx].append(ex)
                     print ('fail due to fact' , self.print_cube(ex))
+                    lemmaIdx+= 1
 
-        # try new lemmas ? 
+            # end_lemma_idx = len(self.frames) # should we do this or not?
+
+        self.frames_pushed_idxs_map[fidx] =  end_lemma_idx
+        # if len(self.frames[fidx]) > end_lemma_idx : we have unpushed lemmas
+        # how hard to try?
         print ('push lemma finished, press any key to continue')
         input()
+
+        # try new lemmas ? 
+
                     # Question:  lemma (for each lemma control the sygus upper bound, expr size, trial no)
 
                     # get the variable of ex
@@ -281,6 +315,8 @@ class PDR(object):
                 self.frames[fidx].append(itp)
                 if fidx not in self.cexs_blocked:
                     self.cexs_blocked[fidx] = []
+                    self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
+                    
                 self.cexs_blocked[fidx].append(cex)
                 print ('All frames:', self.frames)
                 print ('CEX blocked:', self.cexs_blocked)
