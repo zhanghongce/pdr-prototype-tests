@@ -21,6 +21,13 @@ def next_var(v):
     return Symbol("%s_prime" % v.symbol_name(), v.symbol_type())
 
 Config_Max_Frame = 10000000
+Config_use_itp_in_pushing = True
+Config_debug = False
+
+def pause():
+    if Config_debug:
+        input()
+
 
 
 class BaseAddrCnt(TransitionSystem):
@@ -142,7 +149,7 @@ class PDR(object):
                 for cidx, cex in enumerate(self.cexs_blocked[fidx]):
                     ptr = '*' if self.cexs_pushed_idxs_map.get(fidx,0) == cidx else ' '
                     print ('  %s c%d: ' % (ptr, cidx), self.print_cube(cex) )
-                if self.cexs_pushed_idxs_map.get(fidx,0) == lidx + 1:
+                if self.cexs_pushed_idxs_map.get(fidx,0) == cidx + 1:
                     print ('    all tried to push')
             if fidx in self.unblockable_fact:
                 print ('  facts # : %d'% len(self.unblockable_fact[fidx]) )
@@ -153,15 +160,18 @@ class PDR(object):
 
     def check_init_failed(self, prop, remove_vars, keep_vars):
         init_cex = self.solve(And(self.frames[0] + [ Not(prop) ] ))
+        print ("[Checking init] F0 and not P")
         if init_cex is not None:
-            print("[Checking property] Property failed at INIT")
-            print("[Checking property] CEX: ", self.print_cube(init_cex))
+            print("[Checking init] Property failed at INIT")
+            print("[Checking init] CEX: ", self.print_cube(init_cex))
             return True
+        print ("[Checking init]  F0 and T and not P'")
         init_cex = self.get_bad_state_from_property_invalid_after_trans(prop, 0, remove_vars, keep_vars )
         if init_cex is not None:
-            print("[Checking property] Property failed at F1")
-            print("[Checking property] CEX @F0: ", self.print_cube(init_cex))
+            print("[Checking init] Property failed at F1")
+            print("[Checking init] CEX @F0: ", self.print_cube(init_cex))
             return True
+        print ("[Checking init] Done")
         return False
 
 
@@ -178,7 +188,7 @@ class PDR(object):
             self.dump_frames()
 
             # frame[-1] /\ T -> not (prop)
-            cube = self.get_bad_state_from_property_invalid_after_trans(prop, -1, remove_vars, keep_vars)
+            cube = self.get_bad_state_from_property_invalid_after_trans(prop, len(self.frames)-1, remove_vars, keep_vars)
 
             print ('[Checking property] Get cube: ', cube , ' @F%d' % (len(self.frames)-1))
             # cube is list of (var, assignments)
@@ -217,21 +227,24 @@ class PDR(object):
         assert (len(self.frames) > fidx+1)
         if (fidx not in self.cexs_blocked): # else no cex to push
             print ('  [push_lemma from F%d] <WARN> no cex to push from F%d'%(fidx,fidx))
-            input ()
-        assert (fidx in self.cexs_blocked)
+            pause ()
+        #assert (fidx in self.cexs_blocked)
         
-        start_cexs_idx = self.cexs_pushed_idxs_map.get(fidx,0)
-        end_cex_idx    = len(self.cexs_blocked[fidx])
+        if fidx in self.cexs_blocked:
+            start_cexs_idx = self.cexs_pushed_idxs_map.get(fidx,0)
+            end_cex_idx    = len(self.cexs_blocked[fidx])
 
-        for cexIdx in range(start_cexs_idx,end_cex_idx):
-            cex = self.cexs_blocked[fidx][cexIdx]
-            print ('  [push_lemma F%d] cex to try: c%d :'%(fidx, cexIdx), self.print_cube(cex))
-            if self.recursive_block(cex, fidx+1, remove_vars, keep_vars):
-                print ('  [push_lemma F%d] cex is pushed: '%fidx, self.print_cube(cex))
-        self.cexs_pushed_idxs_map[fidx] =  end_cex_idx # we will push all the cexs at the early time
+            for cexIdx in range(start_cexs_idx,end_cex_idx):
+                cex = self.cexs_blocked[fidx][cexIdx]
+                print ('  [push_lemma F%d] cex to try: c%d :'%(fidx, cexIdx), self.print_cube(cex))
+                if self.recursive_block(cex, fidx+1, remove_vars, keep_vars):
+                    print ('  [push_lemma F%d] cex is pushed: '%fidx, self.print_cube(cex))
+            self.cexs_pushed_idxs_map[fidx] =  end_cex_idx # we will push all the cexs at the early time
 
         # if len(self.cexs_blocked[fidx]) > end_cex_idx: there are now more cexs to try pushing
         # there could be more cexs to push (we can decide if we want to add a loop here)
+
+        assert (len(self.frames[fidx]) > 0 )
 
         start_lemma_idx = self.frames_pushed_idxs_map.get(fidx, 0)
         end_lemma_idx   = len(self.frames[fidx]) # we can decide if we want to update this
@@ -244,7 +257,8 @@ class PDR(object):
             if ex is None: # no bad state, lemma is still valid
                 self.frames[fidx+1].append(lemma)
                 self.min_cex_frames_changed = min(fidx+1,self.min_cex_frames_changed)
-                print ('  [push_lemma F%d] Succeed in pushing!'%fidx)
+                print ('  [push_lemma F%d] Succeed in pushing l%d!'%(fidx, lemmaIdx))
+                print ('  [push_lemma F%d] And we add its ITP!'%fidx)
                 lemmaIdx += 1 # try next one
             else:
                 print ('  [push_lemma F%d] find cex@F%d : %s' % (fidx, fidx, self.print_cube(ex)))
@@ -261,7 +275,7 @@ class PDR(object):
 
                     self.dump_frames()
                     print ('  [push_lemma F%d] Should invoke SyGuS here ... ' % fidx)
-                    input()
+                    pause()
 
             # end_lemma_idx = len(self.frames) # should we do this or not?
 
@@ -269,7 +283,7 @@ class PDR(object):
         # if len(self.frames[fidx]) > end_lemma_idx : we have unpushed lemmas
         # how hard to try?
         print ('  [push_lemma F%d] push lemma finished, press any key to continue'%fidx)
-        input()
+        pause()
 
         # try new lemmas ? 
 
@@ -312,11 +326,21 @@ class PDR(object):
     def get_bad_state_from_property_invalid_after_trans(self, prop, idx, remove_vars = [], keep_vars = None):
         """Extracts a reachable state that intersects the negation
         of the property and the last current frame"""
+        assert (idx >= 0)
         print ('    [F%d -> prop]' % idx)
-        md, _ = self.solveTrans(self.frames[idx], \
+        md, itp = self.solveTrans(self.frames[idx], \
             T = self.system.trans, prop = prop, \
             variables = self.system.variables, \
-            remove_vars = remove_vars, keep_vars = keep_vars, findItp = False )
+            remove_vars = remove_vars, keep_vars = keep_vars, findItp = True )
+        if Config_use_itp_in_pushing:
+            if md is None and (idx + 1) < len(self.frames):
+                if self.solve( Not(Implies(And(self.frames[idx]), itp) )) is None:
+                    self.frames[idx+1].append(itp)
+                    self.min_cex_frames_changed = min(idx+1,self.min_cex_frames_changed)
+                    print ('    [F%d -> prop] add ITP to F%d: ' % (idx, idx+1), itp.serialize())
+                else:
+                    print ('    [F%d -> prop] ITP violates monotone requirement.' % idx)
+                    input()
         return md
 
 
@@ -366,7 +390,7 @@ class PDR(object):
             Itp = And(Itp)
             Itp = Itp.substitute(self.primal_map)
             print ('    [solveTrans] get itp: ', Itp.serialize())
-            input()
+            pause()
         return None, Itp
 
 
@@ -379,8 +403,17 @@ class PDR(object):
         for fidx in range(1,len(self.frames)):
             model = self.solve(Not(Implies(And(self.frames[fidx-1]), And(self.frames[fidx]))))
             if model is not None:
+                self.dump_frames()
+                print (' model : ')
                 self.dump_model(model)
                 print ('Bug, not monotone, F%d -> F%d' % (fidx-1, fidx))
+
+                print ('Bug lemmas in F%d' % fidx)
+                for lemmaIdx, lemma in enumerate(self.frames[fidx]):
+                    model = self.solve(Not(Implies(And(self.frames[fidx-1]), lemma)))
+                    if model is not None:
+                        print (' l%d : ' % lemmaIdx, lemma.serialize())
+
                 assert (False)
 
     def dump_model(self, model):
@@ -418,12 +451,18 @@ class PDR(object):
                 remove_vars = remove_vars, keep_vars = keep_vars, findItp = True )
 
             if model is None:
-                self.frames[fidx].append(itp)
-                if fidx not in self.cexs_blocked:
-                    self.cexs_blocked[fidx] = []
-                self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
+
+                if self.solve( Not(Implies(And(self.frames[fidx-1]), itp) )) is None:
+                    self.frames[fidx].append(itp)
+                    if fidx not in self.cexs_blocked:
+                        self.cexs_blocked[fidx] = []
+                else:
+                    print ('      [block] cannot add itp to F%d, breaks monotone.' % fidx)
+                    # in theory you can repair this as well
+                    input ()
 
                 self.cexs_blocked[fidx].append(cex)
+                self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
                 heapq.heappop(priorityQueue) # pop this cex
 
             else:
@@ -448,9 +487,9 @@ def test_naive_pdr():
 def test_naive_pdr_2cnt():
     width = 4
     cnt = TwoCnt(width, True)
-    prop = cnt.false_property(7,8)
+    prop = cnt.neq_property(8,8)
     pdr = PDR(cnt)
     pdr.check_property(prop)
 
 if __name__ == '__main__':
-    test_naive_pdr_2cnt()
+    test_naive_pdr()
