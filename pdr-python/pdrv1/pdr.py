@@ -185,7 +185,10 @@ class PDR(object):
 
         while True:
             self.sanity_check_frame_monotone()
+            self.sanity_check_imply(T = self.system.trans)
             self.dump_frames()
+            print ('Total Frames: %d, L %d , C %d ' %( len(self.frames) , len(self.frames[-1]), len(self.cexs_blocked.get(len(self.frames)-1,[]))))
+            pause ()
 
             # frame[-1] /\ T -> not (prop)
             cube = self.get_bad_state_from_property_invalid_after_trans(prop, len(self.frames)-1, remove_vars, keep_vars)
@@ -255,8 +258,9 @@ class PDR(object):
             ex = self.get_bad_state_from_property_invalid_after_trans(lemma, fidx, remove_vars, keep_vars )
 
             if ex is None: # no bad state, lemma is still valid
-                self.frames[fidx+1].append(lemma)
-                self.min_cex_frames_changed = min(fidx+1,self.min_cex_frames_changed)
+                if lemma not in self.frames[fidx+1]:
+                    self.frames[fidx+1].append(lemma)
+                    self.min_cex_frames_changed = min(fidx+1,self.min_cex_frames_changed)
                 print ('  [push_lemma F%d] Succeed in pushing l%d!'%(fidx, lemmaIdx))
                 print ('  [push_lemma F%d] And we add its ITP!'%fidx)
                 lemmaIdx += 1 # try next one
@@ -269,7 +273,8 @@ class PDR(object):
                 else:
                     if fidx not in self.unblockable_fact:
                         self.unblockable_fact[fidx] = []
-                    self.unblockable_fact[fidx].append(ex)
+                    if ex not in self.unblockable_fact[fidx]: # TODO: not efficient
+                        self.unblockable_fact[fidx].append(ex)
                     print ('  [push_lemma F%d] fail due to fact'%fidx , self.print_cube(ex))
                     lemmaIdx+= 1
 
@@ -335,12 +340,13 @@ class PDR(object):
         if Config_use_itp_in_pushing:
             if md is None and (idx + 1) < len(self.frames):
                 if self.solve( Not(Implies(And(self.frames[idx]), itp) )) is None:
-                    self.frames[idx+1].append(itp)
-                    self.min_cex_frames_changed = min(idx+1,self.min_cex_frames_changed)
+                    if itp not in self.frames[idx+1]:
+                        self.frames[idx+1].append(itp)
+                        self.min_cex_frames_changed = min(idx+1,self.min_cex_frames_changed)
                     print ('    [F%d -> prop] add ITP to F%d: ' % (idx, idx+1), itp.serialize())
                 else:
                     print ('    [F%d -> prop] ITP violates monotone requirement.' % idx)
-                    input()
+                    pause ()
         return md
 
 
@@ -397,6 +403,17 @@ class PDR(object):
 
     # ---------------------------------------------------------------------------------
 
+    def sanity_check_imply(self, T):
+        assert (len(self.frames) > 1)
+        for fidx in range(1,len(self.frames)):
+            next_frame = And(self.frames[fidx])
+            next_frame = next_frame.substitute(self.prime_map)
+            model = self.solve(Not(Implies(And(self.frames[fidx-1] + [T]), next_frame)))
+            if model is not None:
+                print ('Bug, F%d and T -/-> F%d' % (fidx-1, fidx))
+                assert (False)
+
+
 
     def sanity_check_frame_monotone(self):
         assert (len(self.frames) > 1)
@@ -429,6 +446,13 @@ class PDR(object):
     def recursive_block(self, cube, idx, remove_vars = [], keep_vars = None):
         priorityQueue = []
         print ('      [block] Try @F%d' % idx, self.print_cube(cube) )
+
+        prop = Not(And([EqualsOrIff(v,val) for v,val in cube]))
+        if self.solve(And(self.frames[idx] + [Not( prop )] )) is None:
+            print ('      [block] already blocked by F%d' % idx)
+            pause ()
+            return True
+
         heapq.heappush(priorityQueue, (idx, cube))
         while len(priorityQueue) > 0:
             fidx, cex = heapq.nsmallest(1, priorityQueue)[0]
@@ -453,16 +477,25 @@ class PDR(object):
             if model is None:
 
                 if self.solve( Not(Implies(And(self.frames[fidx-1]), itp) )) is None:
-                    self.frames[fidx].append(itp)
-                    if fidx not in self.cexs_blocked:
-                        self.cexs_blocked[fidx] = []
+                    if itp not in self.frames[fidx]:
+                        self.frames[fidx].append(itp)
+                        self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
+                    
                 else:
-                    print ('      [block] cannot add itp to F%d, breaks monotone.' % fidx)
+                    print ('      [block] cannot add itp to F%d, breaks monotone, use not cex instead.' % fidx)
                     # in theory you can repair this as well
-                    input ()
+                    if prop in self.frames[fidx]:
+                        self.dump_frames()
+                    assert (prop not in self.frames[fidx])
+                    self.frames[fidx].append(prop)
+                    self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
+                    pause ()
 
-                self.cexs_blocked[fidx].append(cex)
-                self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
+                if fidx not in self.cexs_blocked:
+                    self.cexs_blocked[fidx] = []
+                if cex not in self.cexs_blocked[fidx]: # do you need check duplicity?
+                    self.cexs_blocked[fidx].append(cex)
+                    self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
                 heapq.heappop(priorityQueue) # pop this cex
 
             else:
@@ -490,6 +523,8 @@ def test_naive_pdr_2cnt():
     prop = cnt.neq_property(8,8)
     pdr = PDR(cnt)
     pdr.check_property(prop)
+    pdr.sanity_check_imply()
+    pdr.sanity_check_frame_monotone()
 
 if __name__ == '__main__':
     test_naive_pdr()
