@@ -1,4 +1,4 @@
-from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV, EqualsOrIff
+from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV, EqualsOrIff, BVNot, BVSub
 from pysmt.shortcuts import is_sat, is_unsat, Solver, TRUE
 from pysmt.typing import BOOL, BVType
 from pysmt.shortcuts import Interpolator
@@ -63,6 +63,49 @@ class BaseAddrCnt(TransitionSystem):
         return Not( self.addr.Equals(addr) & self.base.Equals(base) & self.cnt.Equals(cnt) )
 
 
+class TwoCnt(TransitionSystem):
+    def __init__(self, nbits, zero_init = False):
+        self.nbits = nbits # save the number of bits
+        self.mask = 2**(nbits)-1
+
+        self.c1   = Symbol('c1', BVType(nbits))
+        self.c2   = Symbol('c2', BVType(nbits))
+        self.inp  = Symbol('inp',  BVType(nbits))
+        self.lden = Symbol('lden',  BVType(1))
+
+        variables = [self.c1, self.c2, self.inp, self.lden]
+        prime_variables = [next_var(v) for v in variables]
+        if zero_init:
+            init = self.c1.Equals(0) & self.c2.Equals(self.mask)
+        else:
+            init = self.c1.Equals(self.inp) & self.c2.Equals(BVNot(self.inp))
+        trans= next_var(self.c1).Equals( \
+            Ite(self.lden.Equals(1), self.inp, BVAdd(self.c1, BV(1, nbits)  ))) & \
+            next_var(self.c2).Equals( \
+            Ite(self.lden.Equals(1), BVNot(self.inp), BVSub(self.c2, BV(1, nbits)  )))
+            
+        TransitionSystem.__init__(self, \
+          variables = variables, \
+          prime_variables = prime_variables, \
+          init = init, trans = trans )
+
+    def neq_property(self, c1, c2):
+        c1 = c1 & self.mask
+        c2 = c2 & self.mask
+
+        assert ( c1 + c2 != self.mask)
+
+        return Not( self.c1.Equals(c1) & self.c2.Equals(c2) )
+
+    def false_property(self, c1, c2):
+        c1 = c1 & self.mask
+        c2 = c2 & self.mask
+
+        assert ( c1 + c2 == self.mask)
+
+        return Not( self.c1.Equals(c1) & self.c2.Equals(c2) )
+
+
 
 class PDR(object):
     def __init__(self, system):
@@ -105,11 +148,23 @@ class PDR(object):
         print ('---------- END Frames DUMP ----------')
 
 
+    def check_init_failed(self, prop, remove_vars, keep_vars):
+        if self.solve(And(self.frames[0] + [ Not(prop) ] )) is not None:
+            print("[Checking property] Property failed at INIT")
+            return True
+        if self.get_bad_state_from_property_invalid_after_trans(prop, 0, remove_vars, keep_vars ) is not None:
+            print("[Checking property] Property failed at F1")
+            return True
+        return False
+
 
 
     def check_property(self, prop, remove_vars = [], keep_vars = None):
         """Property Directed Reachability approach without optimizations."""
         print("[Checking property] Property: %s." % prop)
+
+        if self.check_init_failed(prop, remove_vars, keep_vars):
+            return False
 
         while True:
             self.sanity_check_frame_monotone()
@@ -124,14 +179,14 @@ class PDR(object):
                 # Blocking phase of a bad state
                 if not self.recursive_block(cube, len(self.frames)-1, remove_vars, keep_vars ):
                     print("[Checking property] Bug found at step %d" % (len(self.frames)))
-                    break
+                    return False
                 else:
                     print("[Checking property] Cube blocked '%s'" % self.print_cube(cube))
             else:
                 # Checking if the last two frames are equivalent i.e., are inductive
                 if self.is_last_two_frames_inductive():
                     print("[Checking property] The system is safe, frame : %d" % len(self.frames) )
-                    break
+                    return True
                 else:
                     print("[Checking property] Adding frame %d..." % (len(self.frames)))
                     self.frames.append([])
@@ -383,5 +438,12 @@ def test_naive_pdr():
     pdr.check_property(prop)
 
 
+def test_naive_pdr_2cnt():
+    width = 4
+    cnt = TwoCnt(width, True)
+    prop = cnt.false_property(7,8)
+    pdr = PDR(cnt)
+    pdr.check_property(prop)
+
 if __name__ == '__main__':
-    test_naive_pdr()
+    test_naive_pdr_2cnt()
