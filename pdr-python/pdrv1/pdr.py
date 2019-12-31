@@ -3,6 +3,9 @@ from pysmt.shortcuts import is_sat, is_unsat, Solver, TRUE
 from pysmt.typing import BOOL, BVType
 from pysmt.shortcuts import Interpolator
 from pysmt.logics import QF_BV
+
+from sygus import ItpEnhance
+
 import heapq
 
 class TransitionSystem(object):

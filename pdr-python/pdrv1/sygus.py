@@ -1,6 +1,7 @@
 from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV
 from pysmt.shortcuts import is_sat, is_unsat, Solver, TRUE
 from pysmt.typing import BOOL, BVType
+from opextract import OpExtractor
 
 
 Config_expand_values = False
@@ -120,7 +121,7 @@ def _gen_define_rotate(op, param, outw): # inw = outw
   repls = '(_ %s %d)' % (smt_op, param)
   return k, retStr, repls
 
-def _gen_define_extend(op, param, inw， outw ): # inw = outw
+def _gen_define_extend(op, param, inw, outw ): # inw = outw
   assert (inw > 0)
   assert (inw < outw)
   assert (outw > 0)
@@ -218,14 +219,14 @@ class BvConstructs:
 
 
 # 0 for bool
-self.BvUnary = {}    # width -> set[ops]
-self.BvOps = {}      # you need to know the width also : width -> set[ops] (same width)
-self.BvComps = {}    # you need to know the width also : width -> set[ops] (same width)
-self.BvConsts = {}   # width -> set[consts (should be string already)] # const eq?
-self.BvConcats = {}  # result width -> set[(width1, width2)]
-self.BvExtracts = {} # result width -> set[(input width, h, l)]
-self.BvRotates = {}   # result width -> set[(op, param)]
-self.BvExts = {}     # result width -> set[(op, param， input width )] op 
+#self.BvUnary = {}    # width -> set[ops]
+#self.BvOps = {}      # you need to know the width also : width -> set[ops] (same width)
+#self.BvComps = {}    # you need to know the width also : width -> set[ops] (same width)
+#self.BvConsts = {}   # width -> set[consts (should be string already)] # const eq?
+#self.BvConcats = {}  # result width -> set[(width1, width2)]
+#self.BvExtracts = {} # result width -> set[(input width, h, l)]
+#self.BvRotates = {}   # result width -> set[(op, param)]
+#self.BvExts = {}     # result width -> set[(op, param, input width )] op 
 
 
 
@@ -253,12 +254,19 @@ class ItpEnhance:
         self.F_prev = F_idx_minus2
         self.T = T
 
-        self.opextract = None # work on itp 
-        ??? # fix the above, you need to extract first
+        self.opextract = OpExtractor() # work on itp 
+        self.opextract.walk(itp)
+        
+        # fix the above, you need to extract first -- fixed
         self.LangConstructs = {} # bitwidth -> BvConstructs
+        self._to_bv_constructs()
 
         self.functs = {} # func name -> def string
         self.funct_replace = {} # func name -> text to replace
+        
+    def get_enhanced_itp(self):
+        self.gen_sygus_query('cex-idx.smt2')
+        assert (False) # need to implement here about running cvc4 and read in
 
     def _to_bv_constructs(self):
         # self.opextract -> self.LangConstructs
@@ -392,7 +400,7 @@ class ItpEnhance:
         for width, constr in self.LangConstructs.items():
             comps.append('(= E%d E%d)' % (width, width))
             for op in constr.Comps:
-                if op != '='
+                if op != '=':
                     comps.append('(%s E%d E%d)' % (op, width, width))
         comps = ' '.join(comps)
 
@@ -462,7 +470,7 @@ class ItpEnhance:
             if constr.Exts:
                 evcs += ('(Ext%d' % width) + ' ' + tp + ' ('
                 exts = []
-                for op, param， inw in constr.Exts: # whether it is necessary remains a question
+                for op, param, inw in constr.Exts: # whether it is necessary remains a question
                     k, fdef, repls = _gen_define_extend(op, param, inw, width)
                     exts.append('(%s E%d)' % (k, inw))
                     if k not in self.functs:
