@@ -149,11 +149,15 @@ class PDR(object):
 
 
     def check_init_failed(self, prop, remove_vars, keep_vars):
-        if self.solve(And(self.frames[0] + [ Not(prop) ] )) is not None:
+        init_cex = self.solve(And(self.frames[0] + [ Not(prop) ] ))
+        if init_cex is not None:
             print("[Checking property] Property failed at INIT")
+            print("[Checking property] CEX: ", self.print_cube(init_cex))
             return True
-        if self.get_bad_state_from_property_invalid_after_trans(prop, 0, remove_vars, keep_vars ) is not None:
+        init_cex = self.get_bad_state_from_property_invalid_after_trans(prop, 0, remove_vars, keep_vars )
+        if init_cex is not None:
             print("[Checking property] Property failed at F1")
+            print("[Checking property] CEX @F0: ", self.print_cube(init_cex))
             return True
         return False
 
