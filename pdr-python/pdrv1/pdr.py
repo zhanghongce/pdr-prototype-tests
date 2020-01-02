@@ -273,6 +273,9 @@ class PDR(object):
                 else:
                     if fidx not in self.unblockable_fact:
                         self.unblockable_fact[fidx] = []
+
+                    new_failure_of_vars = True # should be due to the vars
+
                     if ex not in self.unblockable_fact[fidx]: # TODO: not efficient
                         self.unblockable_fact[fidx].append(ex)
                     print ('  [push_lemma F%d] fail due to fact'%fidx , self.print_cube(ex))
@@ -281,6 +284,17 @@ class PDR(object):
                     self.dump_frames()
                     print ('  [push_lemma F%d] Should invoke SyGuS here ... ' % fidx)
                     pause()
+                    # unblockable_fact may be of no use
+                    # ctg could be replaced by vars I believe
+                    if new_failure_of_vars:
+                        itp_enhance = ItpEnhance(itp = lemma, \
+                            ctg = ex, facts = self.unblockable_fact[fidx], \
+                            blocked_cexs = self.cexs_blocked[fidx], \
+                            F_idx_minus2 = self.frames[fidx-1], \
+                            T = self.system.trans, allvars = self.system.variables,\
+                            primevars = self.system.prime_variables)
+                        itp_enhance.get_enhanced_itp('sygus_queries/idx.sygus')
+                        input()
 
             # end_lemma_idx = len(self.frames) # should we do this or not?
 

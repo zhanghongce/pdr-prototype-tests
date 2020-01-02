@@ -39,12 +39,11 @@ op_str_map = dict([
     (op.BV_SLT,'bvslt'),
     (op.BV_SLE,'bvsle'),
 
-    # will be changed by sygus.py
-    (op.BV_ROL,'rol'), 
-    (op.BV_ROR,'ror'),
+    (op.BV_ROL,'rotate_left'), 
+    (op.BV_ROR,'rotate_right'),
 
-    (op.BV_ZEXT,'zext'),
-    (op.BV_SEXT,'sext')
+    (op.BV_ZEXT,'zero_extend'),
+    (op.BV_SEXT,'sign_extend')
     ])
 
 unary_op = set([op.NOT, op.BV_NOT, op.BV_NEG])

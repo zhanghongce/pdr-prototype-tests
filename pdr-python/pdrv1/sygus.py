@@ -1,13 +1,14 @@
-from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV
+from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV, EqualsOrIff
 from pysmt.shortcuts import is_sat, is_unsat, Solver, TRUE
 from pysmt.typing import BOOL, BVType
 from opextract import OpExtractor
+from graphreach import GraphReach
 
 
 Config_expand_values = False
 Config_use_trans = True
 Config_use_facts = True
-Config_smtlib2_daggify = True
+Config_smtlib2_daggify = False
 
 # get the variable of ex
 # get the operators of lemma
@@ -47,10 +48,10 @@ def _sanity_check_no_conflict(facts, blocked, vset):
   solver = Solver()
   for cube in facts:
     # facts with more vars
-    solver.add_assertion(And([EqualsOrIff(v,val) for v,val in cube if v in vset]))
+    solver.add_assertion(And([EqualsOrIff(v,val) for v,val in cube.items() if v in vset]))
 
   for cube in blocked:
-    solver.add_assertion(Not(And([EqualsOrIff(v,val) for v,val in cube if v in vset])))
+    solver.add_assertion(Not(And([EqualsOrIff(v,val) for v,val in cube.items() if v in vset])))
 
   assert ( solver.solve() ) # we expect it is satisfiable
 
@@ -87,61 +88,6 @@ def _const_to_str(fn):
     return 'true' if fn.is_true() else 'false'
   assert (False) # unknown type
 
-def _gen_define_extracts(inw, h, l, outw):
-  assert (h >= l)
-  assert (h < inw)
-  assert (l >= 0)
-  assert (h-l +1 == outw)
-  assert (outw > 0)
-  k = 'extractH%dL%dF%dT%d' % (h, l, inw, outw)
-  retStr = ( '(define-fun '+k)
-  retStr += (' ((in %s)) ' % BvConstructs.width_to_type(inw) ) + BvConstructs.width_to_type(outw) + \
-    (' ((_ extract %d %d) in)' % (h,l))
-  retStr += ')'
-  repls = '(_ extract %d %d)' % (h,l)
-  return k, retStr, repls
-
-
-def _gen_define_rotate(op, param, outw): # inw = outw
-  assert (outw > 0)
-  assert (param > 0)
-  k = '%sP%dT%d' % (op, param, outw)
-  retStr = ( '(define-fun ' + k)
-
-  if op == 'rol':
-    smt_op = 'rotate_left'
-  elif op == 'ror':
-    smt_op = 'rotate_right'
-  else:
-    assert False
-
-  retStr += (' ((in %s)) ' % BvConstructs.width_to_type(outw) ) + BvConstructs.width_to_type(outw) + \
-    ' ((_ %s %d) in)' % (smt_op, param)
-  retStr += ')'
-  repls = '(_ %s %d)' % (smt_op, param)
-  return k, retStr, repls
-
-def _gen_define_extend(op, param, inw, outw ): # inw = outw
-  assert (inw > 0)
-  assert (inw < outw)
-  assert (outw > 0)
-  assert (param > 0)
-  k = '%sP%dT%d' % (op, param, outw)
-  retStr = ( '(define-fun ' + k)
-
-  if op == 'zext':
-    smt_op = 'zero_extend'
-  elif op == 'sext':
-    smt_op = 'sign_extend'
-  else:
-    assert False
-
-  retStr += (' ((in %s)) ' % BvConstructs.width_to_type(inw) ) + BvConstructs.width_to_type(outw) + \
-    ' ((_ %s %d) in)' % (smt_op, param)
-  retStr += ')'
-  repls = '(_ %s %d)' % (smt_op, param)
-  return k, retStr, repls
-
 def _gen_smt2(fn):
   return fn.to_smtlib(daggify = Config_smtlib2_daggify)
   
@@ -155,8 +101,10 @@ sygus_template = """
 
 (synth-fun INV 
    {args} Bool
+( (Conj Bool) (Disj Bool) (Literal Bool) (Atom Bool)
+  {nonterminals}
+)
 (
-    (Start Bool (Conj))
     (Conj Bool (Disj 
                 (and Disj Conj)))
     (Disj Bool (Literal 
@@ -178,6 +126,7 @@ sygus_template = """
 {blocks}
 {facts}
 {imply}
+{monotone}
 
 (check-synth)
 
@@ -195,11 +144,12 @@ sygus_template = """
 # (constraint (INV #b10 #b00 #b00))
 
 # (constraint (=> (and (F-2 %allvars%) (Tr %allvars%)) (INV %vars%)))
+# (constraint (=> (F-2 %allvars%) ))
 
 
 
 class BvConstructs:
-  def __init__(self, Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [] ):
+  def __init__(self, Vars , Arithms , Comps , Consts , Concats , Extracts , Rotates , Exts , Unary  ):
     self.Vars, self.Arithms, self.Comps , self.Consts , self.Concats, self.Extracts, \
       self.Rotates, self.Exts, self.Unary =  \
         Vars, Arithms, Comps, Consts, Concats, Extracts, Rotates, Exts, Unary
@@ -241,13 +191,15 @@ class ItpEnhance:
         assert (isinstance(F_idx_minus2,list))
 
         self.ctg = ctg
-        self.allvars = allvars
-        self.primevars = primevars
+        self.allvars = sorted(allvars, key = lambda x: x.symbol_name())
+        self.primevars = sorted(primevars, key = lambda x: x.symbol_name())  
         self.variable_set = _get_var(ctg)
-        self.ordered_vars = sorted(list(self.variable_set))
+        self.ordered_vars = sorted(list(self.variable_set), key = lambda x: x.symbol_name())
 
-        self.facts = _get_cubes_with_more_var(facts)  # exists a = 1 b = 1 (c ?)
-        self.blocked_cexs = _get_cubes_with_fewer_var(blocked_cexs) # (not a = 1)
+        # list of dict (v -> val)
+        self.facts = _get_cubes_with_more_var(facts, self.variable_set)  # exists a = 1 b = 1 (c ?)
+        # list of dict (v -> val)
+        self.blocked_cexs = _get_cubes_with_fewer_var(blocked_cexs, self.variable_set) # (not a = 1)
 
         _sanity_check_no_conflict(self.facts, self.blocked_cexs, self.variable_set)
 
@@ -259,14 +211,15 @@ class ItpEnhance:
         
         # fix the above, you need to extract first -- fixed
         self.LangConstructs = {} # bitwidth -> BvConstructs
-        self._to_bv_constructs()
+        self._to_bv_constructs()        
+        self._remove_unused_width()
 
-        self.functs = {} # func name -> def string
+        self.functs = {} # func name -> def string # currently no use
         self.funct_replace = {} # func name -> text to replace
         
-    def get_enhanced_itp(self):
-        self.gen_sygus_query('cex-idx.smt2')
-        assert (False) # need to implement here about running cvc4 and read in
+    def get_enhanced_itp(self, fn = 'cex-idx.smt2'):
+        self.gen_sygus_query(fn)
+        #assert (False) # need to implement here about running cvc4 and read in
 
     def _to_bv_constructs(self):
         # self.opextract -> self.LangConstructs
@@ -275,47 +228,51 @@ class ItpEnhance:
         for v in self.variable_set:
             w = _get_unified_width(v)
             if w not in self.LangConstructs:
-                self.LangConstructs[w] = BvConstructs()
+                self.LangConstructs[w] = BvConstructs(Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [])
+            print (v,'width=',w)
             self.LangConstructs[w].Vars.append(v.symbol_name())
+            print (self.LangConstructs[w].Vars)
 
-        for w, ops in self.opextract.BvUnary:
+        print (self.opextract.BvUnary)
+        print (self.opextract.BvOps)
+        for w, ops in self.opextract.BvUnary.items():
             if w not in self.LangConstructs:
-                self.LangConstructs[w] = BvConstructs()
+                self.LangConstructs[w] = BvConstructs(Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [])
             self.LangConstructs[w].Unary = ops
 
-        for w, ops in self.opextract.BvOps:
+        for w, ops in self.opextract.BvOps.items():
             if w not in self.LangConstructs:
-                self.LangConstructs[w] = BvConstructs()
+                self.LangConstructs[w] = BvConstructs(Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [])
             self.LangConstructs[w].Arithms = ops
 
-        for w, ops in self.opextract.BvComps:
+        for w, ops in self.opextract.BvComps.items():
             if w not in self.LangConstructs:
-                self.LangConstructs[w] = BvConstructs()
+                self.LangConstructs[w] = BvConstructs(Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [])
             self.LangConstructs[w].Comps = ops
 
-        for w, consts in self.opextract.BvConsts:
+        for w, consts in self.opextract.BvConsts.items():
             if w not in self.LangConstructs:
-                self.LangConstructs[w] = BvConstructs()
+                self.LangConstructs[w] = BvConstructs(Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [])
             self.LangConstructs[w].Consts = consts
 
-        for w, concats in self.opextract.BvConcats:
+        for w, concats in self.opextract.BvConcats.items():
             if w not in self.LangConstructs:
-                self.LangConstructs[w] = BvConstructs()
+                self.LangConstructs[w] = BvConstructs(Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [])
             self.LangConstructs[w].Concats = concats
 
-        for w, extracts in self.opextract.BvExtracts:
+        for w, extracts in self.opextract.BvExtracts.items():
             if w not in self.LangConstructs:
-                self.LangConstructs[w] = BvConstructs()
+                self.LangConstructs[w] = BvConstructs(Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [])
             self.LangConstructs[w].Extracts = extracts
 
-        for w, rotates in self.opextract.BvRotates:
+        for w, rotates in self.opextract.BvRotates.items():
             if w not in self.LangConstructs:
-                self.LangConstructs[w] = BvConstructs()
+                self.LangConstructs[w] = BvConstructs(Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [])
             self.LangConstructs[w].Rotates = rotates
 
-        for w, exts in self.opextract.BvExts:
+        for w, exts in self.opextract.BvExts.items():
             if w not in self.LangConstructs:
-                self.LangConstructs[w] = BvConstructs()
+                self.LangConstructs[w] = BvConstructs(Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [])
             self.LangConstructs[w].Exts = exts
 
         # sanity check, when it is referring an arg, arg with that w should exist
@@ -330,7 +287,7 @@ class ItpEnhance:
 
 
     def gen_sygus_query(self, sygus_fn):
-        comps, evcs = self._to_sygus_tree()
+        comps, evcs, nt_stx = self._to_sygus_tree()
         facts_stx = self._to_facts()
         blocks_stx = self._to_blocks()
 
@@ -338,16 +295,18 @@ class ItpEnhance:
         tr_stx = self._gen_tr()
         vp_def_stx = self._gen_def_states()
         imply_stx = self._gen_Fminus2_Tr_imply_constraint()
-        predefs = '\n'.join([ _, d in self.functs.items()])
-        args = _to_args( ordered_vars )
+        monotone_stx = self._gen_Fminus2_imply_constraint()
+        predefs = '\n'.join([d for _, d in self.functs.items()])
+        args = _to_args( self.ordered_vars )
 
-        sygus_template.format(predefs = predefs, args = args, \
+        sygus_query = sygus_template.format(predefs = predefs, args = args, \
             comps = comps, evcs = evcs, Fminus2 = f_minus_2_stx,\
-            Tr = tr_stx, vdefs = vp_def_stx, blocks = blocks_stx,
-            facts = facts_stx, imply = imply_stx)
+            Tr = tr_stx, vdefs = vp_def_stx, blocks = blocks_stx, \
+            facts = facts_stx, imply = imply_stx, monotone = monotone_stx,
+            nonterminals = nt_stx)
 
         with open(sygus_fn, 'w') as fout:
-            fout.write(sygus_template)
+            fout.write(sygus_query)
 
 
     def _gen_def_states(self): # -> vp_def_stx
@@ -356,17 +315,25 @@ class ItpEnhance:
         return ('\n'.join(v_def) + '\n' + '\n'.join(p_def))
 
     def _gen_Fminus2_Tr_imply_constraint(self): #
-        template = '(constraint (=> (and (Fminus2 {argV}) (Tr {argV} {argP})) (INV {argP})))'
+        template = '(constraint (=> (and (Fminus2 {argV}) (Tr {argV} {argP})) (INV {argInvP})))'
         argv = ' '.join([v.symbol_name()+'V' for v in self.allvars])
         argp = ' '.join([v.symbol_name()+'P' for v in self.allvars])
-        return template.format(argV = argv, argP = argp)
+        arginvp = ' '.join([v.symbol_name()+'P' for v in self.ordered_vars])
+        return template.format(argV = argv, argP = argp, argInvP = arginvp)
+
+    def _gen_Fminus2_imply_constraint(self): #
+        template = '(constraint (=> (Fminus2 {argP}) (INV {argInvP})))'
+        argv = ' '.join([v.symbol_name()+'V' for v in self.allvars])
+        argp = ' '.join([v.symbol_name()+'P' for v in self.allvars])
+        arginvp = ' '.join([v.symbol_name()+'P' for v in self.ordered_vars])
+        return template.format(argV = argv, argP = argp, argInvP = arginvp)
 
     def _gen_f_minus_2(self): # -> f_minus_2_stx
-        return '(define-fun Fminus2 ' + _to_args(self.allvars) + ' Bool ' + '(' + _gen_smt2(And(self.F_prev)) + '))'
+        return '(define-fun Fminus2 ' + _to_args(self.allvars) + ' Bool ' +  _gen_smt2(And(self.F_prev)) + ')'
         
     def _gen_tr(self): # -> tr_stx
         return '(define-fun Tr ' + _to_tr_args(self.allvars, self.primevars) + \
-         ' Bool ' + '(' + _gen_smt2(And(self.F_prev)) + '))'
+         ' Bool ' +  _gen_smt2(And(self.T)) + ')'
 
 
     def _to_blocks(self): # -> blocks_stx
@@ -404,36 +371,46 @@ class ItpEnhance:
                     comps.append('(%s E%d E%d)' % (op, width, width))
         comps = ' '.join(comps)
 
+        nonterminals = []
         evcs = ''
 
         for width, constr in self.LangConstructs.items():
             tp = BvConstructs.width_to_type(width)
             evcs += ('(E%d' % width) + ' ' + tp + ' ('
+            nonterminals.append(('E%d' % width, tp))
             
             if constr.Vars:
-              evcs += 'V%d' % width
+              evcs += 'V%d ' % width
+              nonterminals.append(('V%d' % width, tp))
             if constr.Consts:
-              evcs += 'C%d' % width
+              evcs += 'C%d ' % width
+              nonterminals.append(('C%d' % width, tp))
             if constr.Arithms or constr.Unary:
-              evcs += 'Arithm%d' % width
+              evcs += 'Arithm%d ' % width
+              nonterminals.append(('Arithm%d' % width, tp))
             if constr.Concats:
-              evcs += 'Concat%d' % width
+              evcs += 'Concat%d ' % width
+              nonterminals.append(('Concat%d' % width, tp))
             if constr.Extracts:
-              evcs += 'Extract%d' % width
+              evcs += 'Extract%d ' % width
+              nonterminals.append(('Extract%d' % width, tp))
             if constr.Rotates:
-              evcs += 'Rotate%d' % width
+              evcs += 'Rotate%d ' % width
+              nonterminals.append(('Rotate%d' % width, tp))
             if constr.Exts:
-              evcs += 'Ext%d' % width
+              evcs += 'Ext%d ' % width
+              nonterminals.append(('Ext%d' % width, tp))
 
             evcs += '))\n'
 
+            print (constr.Vars)
             if constr.Vars:
                 evcs += ('(V%d' % width) + ' ' + tp + ' ('
                 evcs += ' '.join(constr.Vars) ## TODO: DEAL WITH UNDERSCORE!!!
                 evcs += '))\n'
-            if constr.Concats:
+            if constr.Consts:
                 evcs += ('(C%d' % width) + ' ' + tp + ' ('
-                evcs += ' '.join(constr.Concats) ## TODO: DEAL WITH UNDERSCORE!!!
+                evcs += ' '.join(constr.Consts) ## TODO: DEAL WITH UNDERSCORE!!!
                 evcs += '))\n'
             if constr.Arithms or constr.Unary: # include shifts
                 evcs += ('(Arithm%d' % width) + ' ' + tp + ' ('
@@ -449,38 +426,51 @@ class ItpEnhance:
                 # need to define functions
                 exts = []
                 for inw, h, l in constr.Extracts: # whether it is necessary remains a question
-                    k, fdef, repls = _gen_define_extracts(inw, h, l, width)
-                    exts.append('(%s E%d)' % (k, inw))
-                    if k not in self.functs:
-                        self.functs[k] = fdef
-                        self.funct_replace[k] = repls
+                    exts.append('((_ extract {h} {l}) E{inw})'.format(h = h, l = l, inw = inw))
                 evcs += ' '.join(exts)
                 evcs += '))\n'
             if constr.Rotates:
                 evcs += ('(Rotate%d' % width) + ' ' + tp + ' ('
                 exts = []
                 for op, param in constr.Rotates: # whether it is necessary remains a question
-                    k, fdef, repls = _gen_define_rotate(op, param, width)
-                    exts.append('(%s E%d)' % (k, width))
-                    if k not in self.functs:
-                        self.functs[k] = fdef
-                        self.funct_replace[k] = repls
+                    exts.append('((_ {op} {p}) E{w})'.format(op = op, p = param, w = width))
                 evcs += ' '.join(exts)               
                 evcs += '))\n'
             if constr.Exts:
                 evcs += ('(Ext%d' % width) + ' ' + tp + ' ('
                 exts = []
                 for op, param, inw in constr.Exts: # whether it is necessary remains a question
-                    k, fdef, repls = _gen_define_extend(op, param, inw, width)
-                    exts.append('(%s E%d)' % (k, inw))
-                    if k not in self.functs:
-                        self.functs[k] = fdef
-                        self.funct_replace[k] = repls
+                    exts.append('((_ {op} {p}) E{w})'.format(op = op, p = param, w = width))
                 evcs += ' '.join(exts)      
                 evcs += '))\n'
 
-        return comps, evcs
+        nt_stx = ' '.join(['(%s %s)' % (n,t) for n,t in nonterminals])
+        return comps, evcs, nt_stx
 
+
+    def _remove_unused_width(self):
+        start_set = set([])
+        use_map = {}
+        for width, constr in self.LangConstructs.items():
+            if len(constr.Consts) > 0 or len(constr.Vars) > 0:
+                start_set.add(width)
+            use_map[width] = set([width])
+            for _, _, inw in constr.Exts:
+                use_map[width].add(inw)
+            for inw, _, _ in constr.Extracts: # whether it is necessary remains a question
+                use_map[width].add(inw)
+            for w1, w2 in constr.Concats:
+                use_map[width].add(w1)
+                use_map[width].add(w2)
+        all_width = list(self.LangConstructs.keys())
+        g = GraphReach(
+             nodes = all_width,
+             use_map = use_map, concrete_vals = start_set)
+        used_width = g.compute_reach()
+
+        for width in all_width:
+            if width not in used_width:
+                del self.LangConstructs[width]
 
 
 # ----------------------------------------------
@@ -492,3 +482,6 @@ def test():
 
 if __name__ == '__main__':
     test()
+
+
+# ~/cvc-installs/latest/bin/cvc4 --lang=sygus2 idx.sygus
