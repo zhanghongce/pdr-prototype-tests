@@ -15,8 +15,8 @@
     (Literal Bool (Atom
                 (not Atom)))
     (Atom Bool ((= E2 E2)))
-    (E2 (_ BitVec 2) (V2 (bvadd E2 E2)))
-    (V2 (_ BitVec 2) (base addr cnt C2 V2))
+    (E2 (_ BitVec 2) (V2 C2 (bvadd E2 E2)))
+    (V2 (_ BitVec 2) (base addr cnt))
     (C2 (_ BitVec 2) (#b00 #b01 #b10 #b11))
    ))
 
@@ -51,7 +51,13 @@
 (declare-var cntP  (_ BitVec 2))
 
 (constraint (=> (and (Init baseV addrV cntV inputV enV) (Tr baseV addrV cntV inputV enV baseP addrP cntP inputP enP)) (INV baseP addrP cntP)))
+(constraint (=> (Init baseV addrV cntV inputV enV) (INV baseV addrV cntV)))
 
 (check-synth)
+
+; adding the second does not matter too much
+; ~/cvc-installs/latest/bin/cvc4 --lang=sygus cnt1-2.sygus 
+; unsat
+; (define-fun INV ((base (BitVec 2)) (addr (BitVec 2)) (cnt (BitVec 2))) Bool (= (bvadd cnt base) addr))
 
 

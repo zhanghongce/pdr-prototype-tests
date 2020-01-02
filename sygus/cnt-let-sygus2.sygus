@@ -1,0 +1,50 @@
+(set-logic BV)
+
+
+
+(define-fun AllEq
+   ((A (_ BitVec 2))
+    (B (_ BitVec 2))
+    (C (_ BitVec 2))
+   ) Bool
+   (let ((c1 (= A B)))
+    (let ((c2 (= B C)))
+      (let ((c3 (and c1 c2)))
+        c3
+    )))
+)
+
+(synth-fun INV 
+   ((A (_ BitVec 2))
+    (B (_ BitVec 2))
+    (C (_ BitVec 2))
+   ) 
+   Bool
+    ((Conj Bool) (Disj Bool) (Literal Bool) (Atom Bool) (E2 (_ BitVec 2)) (V2 (_ BitVec 2)) (C2 (_ BitVec 2)))
+  (
+    (Conj Bool (Disj 
+                (and Disj Conj)))
+    (Disj Bool (Literal 
+                (or Literal Disj)))
+    (Literal Bool (Atom
+                (not Atom)))
+    (Atom Bool ((= E2 E2)))
+    (E2 (_ BitVec 2) (V2 C2 (bvadd E2 E2) 
+        ((_ extract 2 1) (concat E2 E2))
+        ((_ rotate_left 1) E2)
+        ))
+    (V2 (_ BitVec 2) (A B C))
+    (C2 (_ BitVec 2) (#b00 #b01 #b10 #b11))
+   ))
+
+(declare-var a (_ BitVec 2))
+(declare-var b (_ BitVec 2))
+(declare-var c (_ BitVec 2))
+
+(constraint (INV #b00 #b01 #b01))
+(constraint (not (INV #b10 #b01 #b01)))
+(constraint (=> (AllEq a b c) (INV a b c)))
+
+(check-synth)
+
+
