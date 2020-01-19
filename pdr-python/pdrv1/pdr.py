@@ -23,6 +23,7 @@ def next_var(v):
 Config_Max_Frame = 10000000
 Config_use_itp_in_pushing = True
 Config_debug = False
+Config_partial_model = True
 
 def pause():
     if Config_debug:
@@ -121,7 +122,12 @@ class PDR(object):
     def __init__(self, system):
         self.system = system
         self.frames = [ [system.init], []  ] # list of list of clauses
-        self.solver = Solver(name = 'z3')
+        
+        if Config_partial_model:
+          self.solver = Solver(name = 'z3') # use z3 for partial model
+        else:
+          self.solver = Solver()
+
         self.itp_solver = Interpolator(logic=QF_BV)
         self.prime_map = dict([(v, next_var(v)) for v in self.system.variables])
         self.primal_map = dict([(next_var(v), v) for v in self.system.variables])
