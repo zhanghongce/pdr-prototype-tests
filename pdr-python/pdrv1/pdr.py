@@ -121,7 +121,7 @@ class PDR(object):
     def __init__(self, system):
         self.system = system
         self.frames = [ [system.init], []  ] # list of list of clauses
-        self.solver = Solver()
+        self.solver = Solver(name = 'z3')
         self.itp_solver = Interpolator(logic=QF_BV)
         self.prime_map = dict([(v, next_var(v)) for v in self.system.variables])
         self.primal_map = dict([(next_var(v), v) for v in self.system.variables])
@@ -289,12 +289,14 @@ class PDR(object):
                     if new_failure_of_vars:
                         itp_enhance = ItpEnhance(itp = lemma, \
                             ctg = ex, facts = self.unblockable_fact[fidx], \
-                            blocked_cexs = self.cexs_blocked[fidx], \
+                            blocked_cexs = self.cexs_blocked.get(fidx,[]), \
                             F_idx_minus2 = self.frames[fidx-1], \
                             T = self.system.trans, allvars = self.system.variables,\
                             primevars = self.system.prime_variables)
                         itp_enhance.get_enhanced_itp('sygus_queries/idx.sygus')
                         input()
+
+                        # cex_blocked could be empty
 
             # end_lemma_idx = len(self.frames) # should we do this or not?
 

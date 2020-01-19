@@ -126,7 +126,7 @@ class PDR(object):
     def __init__(self, system):
         self.system = system
         self.frames = [ [system.init], []  ] # list of list of clauses
-        self.solver = Solver()
+        self.solver = Solver(name='z3')
         self.itp_solver = Interpolator(logic=QF_BV)
         self.prime_map = dict([(v, next_var(v)) for v in self.system.variables])
         self.primal_map = dict([(next_var(v), v) for v in self.system.variables])
@@ -534,4 +534,4 @@ def test_naive_pdr_2cnt():
     pdr.check_property(prop)
 
 if __name__ == '__main__':
-    test_naive_pdr()
+    test_naive_pdr_2cnt()

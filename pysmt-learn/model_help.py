@@ -4,9 +4,10 @@ from pysmt.typing import BOOL, BVType
 a = Symbol('a', BVType(4))
 b = Symbol('b', BVType(4))
 c = Symbol('c', BVType(4))
-s = Solver()
+s = Solver(name='z3')
 s.solve([Ite(a.Equals(0),b,c).Equals(4)])
 md = s.get_model()
+print (md)
 for v,val in md:
   #val = md.get_value(v, False)
   print (v,'=',val)

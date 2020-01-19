@@ -5,7 +5,7 @@
 
 
 (synth-fun INV 
-   ((addr (_ BitVec 4)) (base (_ BitVec 4)) (cnt (_ BitVec 4)) (inp (_ BitVec 4)) (lden (_ BitVec 1))) Bool
+   ((addr (_ BitVec 4)) (base (_ BitVec 4)) (cnt (_ BitVec 4)) (lden (_ BitVec 1))) Bool
 ( (Conj Bool) (Disj Bool) (Literal Bool) (Atom Bool)
   (E4 (_ BitVec 4)) (V4 (_ BitVec 4)) (C4 (_ BitVec 4)) (Arithm4 (_ BitVec 4)) (E1 (_ BitVec 1)) (V1 (_ BitVec 1))
 )
@@ -20,8 +20,8 @@
       (= E4 E4) (= E1 E1)
       ))
       (E4 (_ BitVec 4) (V4 C4 Arithm4 ))
-(V4 (_ BitVec 4) (base addr cnt inp))
-(C4 (_ BitVec 4) (#b0001 #b1000))
+(V4 (_ BitVec 4) (base addr cnt))
+(C4 (_ BitVec 4) (#b1000 #b0001 #b0011))
 (Arithm4 (_ BitVec 4) ((bvadd E4 E4)))
 (E1 (_ BitVec 1) (V1 ))
 (V1 (_ BitVec 1) (lden))
@@ -29,7 +29,7 @@
    ))
 
 
-(define-fun Fminus2 ((addr (_ BitVec 4)) (base (_ BitVec 4)) (cnt (_ BitVec 4)) (inp (_ BitVec 4)) (lden (_ BitVec 1))) Bool (and (not (and (= base #b1000) (not (= addr base)))) (not (and (= base #b1000) (= cnt #b0010))) (not (and (= cnt #b0001) (= base #b1000))) (not (and (= base #b1000) (= cnt #b1111)))))
+(define-fun Fminus2 ((addr (_ BitVec 4)) (base (_ BitVec 4)) (cnt (_ BitVec 4)) (inp (_ BitVec 4)) (lden (_ BitVec 1))) Bool (and (not (and (not (= addr base)) (and (= base #b1000) (not (= addr (bvadd #b0001 base)))))) (not (and (not (= addr base)) (and (= base #b1000) (= cnt #b0000)))) (not (and (not (= addr base)) (and (= base #b1000) (= cnt #b0100)))) (not (and (not (= addr base)) (and (= base #b1000) (= cnt #b1000)))) (not (and (not (= addr base)) (and (= base #b1000) (= cnt #b1100)))) (not (and (not (= addr base)) (and (= base #b1000) (= cnt #b0010)))) (not (and (not (= addr base)) (and (= base #b1000) (= cnt #b1010)))) (not (and (not (= addr base)) (and (= base #b1000) (= cnt #b0110)))) (not (and (not (= addr base)) (and (= base #b1000) (= cnt #b1110)))) (not (and (and (= base #b1000) (not (= addr (bvadd #b0001 base)))) (= cnt #b1111))) (not (and (and (= base #b1000) (not (= addr (bvadd #b0001 base)))) (= cnt #b0011))) (not (and (and (= base #b1000) (not (= addr (bvadd #b0001 base)))) (= cnt #b0111))) (not (and (and (= base #b1000) (not (= addr (bvadd #b0001 base)))) (= cnt #b1011))) (not (and (= cnt #b0001) (and (= base #b1000) (not (= addr (bvadd #b0001 base)))))) (not (and (and (= base #b1000) (not (= addr (bvadd #b0001 base)))) (= cnt #b1001))) (not (and (and (= base #b1000) (not (= addr (bvadd #b0001 base)))) (= cnt #b0101))) (not (and (and (= base #b1000) (not (= addr (bvadd #b0001 base)))) (= cnt #b1101))) (not (and (= base #b1000) (= cnt #b1111))) (not (and (= base #b1000) (= cnt #b0011))) (not (and (= base #b1000) (= cnt #b0111))) (not (and (= base #b1000) (= cnt #b1011))) (not (and (= base #b1000) (= cnt #b1001))) (not (and (= base #b1000) (= cnt #b0101))) (not (and (= base #b1000) (= cnt #b1101))) (not (and (= base #b1000) (= cnt #b1110))) (not (and (= base #b1000) (= cnt #b0010))) (not (and (= base #b1000) (= cnt #b0110))) (not (and (= base #b1000) (= cnt #b1010))) (not (and (= base #b1000) (= cnt #b1000))) (not (and (= base #b1000) (= cnt #b0100))) (not (and (= base #b1000) (= cnt #b1100)))))
 (define-fun Tr ((addr (_ BitVec 4)) (base (_ BitVec 4)) (cnt (_ BitVec 4)) (inp (_ BitVec 4)) (lden (_ BitVec 1)) (addr_prime (_ BitVec 4)) (base_prime (_ BitVec 4)) (cnt_prime (_ BitVec 4)) (inp_prime (_ BitVec 4)) (lden_prime (_ BitVec 1))) Bool (and (and (= base_prime (ite (= lden #b1) inp base)) (= addr_prime (ite (= lden #b1) inp (bvadd addr #b0001)))) (= cnt_prime (ite (= lden #b1) #b0000 (bvadd cnt #b0001)))))
 
 (declare-var addrV (_ BitVec 4))
@@ -43,13 +43,26 @@
 (declare-var inpP (_ BitVec 4))
 (declare-var ldenP (_ BitVec 1))
 
-(constraint (not (INV #b0000 #b1000 #b0000 #b0000 #b0)))
-(constraint (not (INV #b1000 #b1000 #b0010 #b0000 #b0)))
-(constraint (not (INV #b1001 #b1000 #b0000 #b1010 #b0)))
-(constraint (not (INV #b1001 #b1000 #b0011 #b1000 #b0)))
-(constraint (INV #b1001 #b1000 #b0001 #b1000 #b0))
-(constraint (=> (and (Fminus2 addrV baseV cntV inpV ldenV) (Tr addrV baseV cntV inpV ldenV addrP baseP cntP inpP ldenP)) (INV addrP baseP cntP inpP ldenP)))
-(constraint (=> (Fminus2 addrP baseP cntP inpP ldenP) (INV addrP baseP cntP inpP ldenP)))
+(constraint (not (INV #b0000 #b1000 #b0000 #b0)))
+(constraint (not (INV #b1001 #b1000 #b0000 #b0)))
+(constraint (not (INV #b1001 #b1000 #b0100 #b0)))
+(constraint (not (INV #b1001 #b1000 #b1000 #b0)))
+(constraint (not (INV #b1001 #b1000 #b1100 #b0)))
+(constraint (not (INV #b1001 #b1000 #b0010 #b0)))
+(constraint (not (INV #b1001 #b1000 #b1010 #b0)))
+(constraint (not (INV #b1001 #b1000 #b0110 #b0)))
+(constraint (not (INV #b1001 #b1000 #b1110 #b0)))
+(constraint (not (INV #b1000 #b1000 #b1111 #b0)))
+(constraint (not (INV #b1000 #b1000 #b0011 #b0)))
+(constraint (not (INV #b1000 #b1000 #b0111 #b0)))
+(constraint (not (INV #b1000 #b1000 #b1011 #b0)))
+(constraint (not (INV #b1000 #b1000 #b0001 #b0)))
+(constraint (not (INV #b1000 #b1000 #b1001 #b0)))
+(constraint (not (INV #b1000 #b1000 #b0101 #b0)))
+(constraint (not (INV #b1000 #b1000 #b1101 #b0)))
+(constraint (INV #b1010 #b1000 #b0010 #b0))
+(constraint (=> (and (Fminus2 addrV baseV cntV inpV ldenV) (Tr addrV baseV cntV inpV ldenV addrP baseP cntP inpP ldenP)) (INV addrP baseP cntP ldenP)))
+(constraint (=> (Fminus2 addrP baseP cntP inpP ldenP) (INV addrP baseP cntP ldenP)))
 
 (check-synth)
 
