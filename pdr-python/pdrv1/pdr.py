@@ -1,7 +1,7 @@
 from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV, EqualsOrIff, BVNot, BVSub
 from pysmt.shortcuts import is_sat, is_unsat, Solver, TRUE
 from pysmt.typing import BOOL, BVType
-from pysmt.shortcuts import Interpolator
+from pysmt.shortcuts import Interpolator, simplify
 from pysmt.logics import QF_BV
 
 from sygus import ItpEnhance
@@ -24,6 +24,7 @@ Config_Max_Frame = 10000000
 Config_use_itp_in_pushing = True
 Config_debug = False
 Config_partial_model = True
+Config_simplify_itp = True
 
 def pause():
     if Config_debug:
@@ -140,6 +141,15 @@ class PDR(object):
         self.min_cex_frames_changed = Config_Max_Frame
         # map: v --> next_v
 
+    def _add_lemma_to_all_prev_frame(self, end_frame_id, lemma):
+        for idx in range(1,end_frame_id+1):
+            if lemma not in self.frames[idx]:
+                self.frames[idx].insert(0, lemma)
+                pushed_idx = self.frames_pushed_idxs_map.get(idx, 0)
+                pushed_idx += 1
+                self.frames_pushed_idxs_map[idx] = pushed_idx
+
+
     def dump_frames(self):
         print ('---------- Frames DUMP ----------')
         for fidx,f in enumerate(self.frames):
@@ -191,7 +201,7 @@ class PDR(object):
 
         while True:
             self.sanity_check_frame_monotone()
-            self.sanity_check_imply(T = self.system.trans)
+            self.sanity_check_imply()
             self.dump_frames()
             print ('Total Frames: %d, L %d , C %d ' %( len(self.frames) , len(self.frames[-1]), len(self.cexs_blocked.get(len(self.frames)-1,[]))))
             pause ()
@@ -360,15 +370,19 @@ class PDR(object):
             variables = self.system.variables, \
             remove_vars = remove_vars, keep_vars = keep_vars, findItp = True )
         if Config_use_itp_in_pushing:
+
             if md is None and (idx + 1) < len(self.frames):
-                if self.solve( Not(Implies(And(self.frames[idx]), itp) )) is None:
-                    if itp not in self.frames[idx+1]:
-                        self.frames[idx+1].append(itp)
-                        self.min_cex_frames_changed = min(idx+1,self.min_cex_frames_changed)
-                    print ('    [F%d -> prop] add ITP to F%d: ' % (idx, idx+1), itp.serialize())
-                else:
-                    print ('    [F%d -> prop] ITP violates monotone requirement.' % idx)
-                    pause ()
+                print ('    [F%d -> prop] add ITP to F%d: ' % (idx, idx+1), itp.serialize())
+                if itp not in self.frames[idx+1]:
+                    self.frames[idx+1].append(itp)
+                    self.min_cex_frames_changed = min(idx+1,self.min_cex_frames_changed)
+
+                if self.solve( Not(Implies(And(self.frames[idx]), itp) )) is not None:
+                    self._add_lemma_to_all_prev_frame( end_frame_id = idx, lemma = itp )
+                    print ('    [F%d -> prop] add ITP to F1 ->>- F%d: ' % (idx, idx), itp.serialize())
+
+                pause()
+                input()
         return md
 
 
@@ -417,6 +431,10 @@ class PDR(object):
             Itp = self.itp_solver.binary_interpolant( a = And(prevF + [T]), b= Not( prop.substitute(self.prime_map)) )
             Itp = And(Itp)
             Itp = Itp.substitute(self.primal_map)
+
+            if Config_simplify_itp:
+                Itp = simplify(Itp)
+
             print ('    [solveTrans] get itp: ', Itp.serialize())
             pause()
         return None, Itp
@@ -424,9 +442,21 @@ class PDR(object):
 
 
     # ---------------------------------------------------------------------------------
+    def get_inv(self):
+        return And(self.frames[-1])
 
-    def sanity_check_imply(self, T):
+    def sanity_check_inductive_inv(self, prop ):
+        T = self.system.trans
+        inv = self.get_inv()
+        inv_prime = inv.substitute(self.prime_map)
+        assert ( self.solve(Not(Implies(self.system.init,inv))) is None)
+        assert ( self.solve(Not(Implies(And(inv, T), inv_prime))) is None)
+        assert ( self.solve(Not(Implies(inv, prop))) is None)
+
+
+    def sanity_check_imply(self):
         assert (len(self.frames) > 1)
+        T = self.system.trans
         for fidx in range(1,len(self.frames)):
             next_frame = And(self.frames[fidx])
             next_frame = next_frame.substitute(self.prime_map)
@@ -498,20 +528,15 @@ class PDR(object):
 
             if model is None:
 
-                if self.solve( Not(Implies(And(self.frames[fidx-1]), itp) )) is None:
-                    if itp not in self.frames[fidx]:
-                        self.frames[fidx].append(itp)
-                        self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
+                # add itp to all previous frames
+                if self.solve( Not(Implies(And(self.frames[fidx-1]), itp) )) is not None:
+                    self._add_lemma_to_all_prev_frame( end_frame_id = fidx-1, lemma = itp )
+                    print ('    [block] add ITP to F1 ->>- F%d: ' % (fidx-1), itp.serialize())
                     
-                else:
-                    print ('      [block] cannot add itp to F%d, breaks monotone, use not cex instead.' % fidx)
-                    # in theory you can repair this as well
-                    if prop in self.frames[fidx]:
-                        self.dump_frames()
-                    assert (prop not in self.frames[fidx])
-                    self.frames[fidx].append(prop)
+                if itp not in self.frames[fidx]:
+                    self.frames[fidx].append(itp)
                     self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
-                    pause ()
+
 
                 if fidx not in self.cexs_blocked:
                     self.cexs_blocked[fidx] = []
@@ -537,6 +562,10 @@ def test_naive_pdr():
     prop = cnt.neq_property(1 << (width-1),1,1)
     pdr = PDR(cnt)
     pdr.check_property(prop)
+    pdr.sanity_check_imply()
+    pdr.sanity_check_frame_monotone()
+    pdr.sanity_check_inductive_inv(prop)
+    print ('inv: ', simplify(pdr.get_inv()))
 
 
 def test_naive_pdr_2cnt():
@@ -547,6 +576,8 @@ def test_naive_pdr_2cnt():
     pdr.check_property(prop)
     pdr.sanity_check_imply()
     pdr.sanity_check_frame_monotone()
+    pdr.sanity_check_inductive_inv(prop)
+    print ('inv: ', simplify(pdr.get_inv()))
 
 if __name__ == '__main__':
     test_naive_pdr()
