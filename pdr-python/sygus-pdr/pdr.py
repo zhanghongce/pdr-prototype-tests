@@ -5,7 +5,7 @@ from pysmt.shortcuts import Interpolator
 from pysmt.logics import QF_BV
 
 from utilfunc import _get_var, _get_cubes_with_more_var, _get_cubes_with_fewer_var
-from sygus import ItpEnhance
+from cegpbe import CexGuidedPBE
 from opextract import OpExtractor
 
 import heapq
@@ -260,7 +260,7 @@ class PDR(object):
             ex = self.get_bad_state_from_property_invalid_after_trans(lemma, fidx, remove_vars, keep_vars )
 
             if ex is None: # no bad state, lemma is still valid
-                self._add_lemma(lemma, fidx+1)
+                self._add_lemma(lemma = lemma, fidx = fidx+1)
                 return ex
 
             else:
@@ -313,7 +313,7 @@ class PDR(object):
             
             assert (ex is not None and len(ex) > 0)
             print ('  [push_lemma F%d] fail due to fact'%fidx , self.print_cube(ex))
-            self._add_fact(ex, fidx)
+            self._add_fact(fact=ex, fidx=fidx)
 
             # IMPROVEMENT: per vars not per failed instance
 
@@ -339,6 +339,7 @@ class PDR(object):
                 prime_map   = self.prime_map, # v --> next_v
                 T =  self.system.trans,
                 F_idx_minus2 =  self.frames[fidx-1],
+                Init = self.system.init, # IMPROVEMENT: Use init
                 inv_var_set = inv_var_set, # we can change this if necessary
                 facts_on_inv_vars = facts_on_inv_vars,
                 cexs_on_inv_vars = cexs_on_inv_vars,
@@ -350,6 +351,12 @@ class PDR(object):
 
             new_lemma = cex_guided_pbe.syn_loop()
 
+            if new_lemma is None:
+                print ('  [push_lemma F%d] SyGuS on l%d failed to gen candidate!'%(fidx, lemmaIdx))
+                lemmaIdx += 1 # try next one
+                continue
+
+            # IMPROVEMENT : recursively do this
             ex = []
             while (ex is not None) and len(ex) == 0: # try push
                 ex = _push_lemma(new_lemma, fidx, remove_vars, keep_vars)
@@ -358,6 +365,14 @@ class PDR(object):
                     print ('  [push_lemma F%d] And we add its ITP!'%fidx)
                     lemmaIdx += 1 # try next one
                     continue
+            
+            assert (ex is not None and len(ex) > 0)
+
+
+            print ('  [push_lemma F%d] SyGuS on l%d failed to gen pushable candidate!'%(fidx, lemmaIdx))
+            print ('  [push_lemma F%d] SyGuS on l%d get: %s'%(fidx, lemmaIdx, new_lemma.serialize()))
+            print ('  [push_lemma F%d] Failed by fact'%(fidx, lemmaIdx, new_lemma.serialize()))
+            pause()
 
             # get an itp and try to push it
             # if  there is new fact, redo this
@@ -420,7 +435,7 @@ class PDR(object):
         if Config_use_itp_in_pushing:
             if md is None and (idx + 1) < len(self.frames):
                 if self.solve( Not(Implies(And(self.frames[idx]), itp) )) is None:
-                    self._add_lemma(itp, idx+1)
+                    self._add_lemma(lemma = itp, fidx = idx+1)
                     print ('    [F%d -> prop] add ITP to F%d: ' % (idx, idx+1), itp.serialize())
                 else:
                     # in theory you can repair it as well
@@ -556,15 +571,15 @@ class PDR(object):
             if model is None:
 
                 if self.solve( Not(Implies(And(self.frames[fidx-1]), itp) )) is None:
-                    self._add_lemma(itp, fidx)
+                    self._add_lemma(lemma = itp, fidx = fidx)
                     
                 else:
                     print ('      [block] cannot add itp to F%d, breaks monotone, use not cex instead.' % fidx)
-                    self._add_lemma(prop, fidx)
+                    self._add_lemma(lemma = prop, fidx = fidx)
                     # in theory you can repair this as well
 
 
-                self._add_cex(fidx, cex) 
+                self._add_cex(fidx = fidx, cex = cex) 
 
                 heapq.heappop(priorityQueue) # pop this cex
 

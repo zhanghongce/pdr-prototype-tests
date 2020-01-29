@@ -3,7 +3,7 @@ from pysmt.shortcuts import is_sat, is_unsat, Solver, TRUE
 from pysmt.typing import BOOL, BVType
 from graphreach import GraphReach
 from utilfunc import _get_var, _get_cubes_with_fewer_var, _get_cubes_with_more_var, \
-  _sanity_check_no_conflict, _get_unified_width, _to_type_string, _to_name_type, \
+  _get_unified_width, _to_type_string, _to_name_type, \
   _to_name_type_suffix_no_p, _to_args, _const_to_str, _gen_smt2
 
 
@@ -12,6 +12,32 @@ Config_use_trans = False
 Config_use_Fminus2_imply = False
 Config_use_facts = True
 Config_smtlib2_daggify = False # maybe make it to True ?
+
+
+
+def _sanity_check_no_conflict(facts, blocked, vset):
+  solver = Solver()
+
+  facts_or_list = []
+  for cube in facts:
+    # facts with more vars
+    facts_or_list.append( And([EqualsOrIff(v,val) for v,val in cube.items() if v in vset]))
+  solver.add_assertion(Or(facts_or_list))
+
+  for cube in blocked:
+    solver.add_assertion(Not(And([EqualsOrIff(v,val) for v,val in cube.items() if v in vset])))
+  
+  satisfiable = solver.solve()
+  if not satisfiable:
+    print ('cex and facts conflicts: unsat!')
+    print ('----Facts----')
+    for cube in facts:
+      print (cube)
+    print ('----Blocks----')
+    for cube in blocked:
+      print (cube)
+      
+  assert ( satisfiable ) # we expect it is satisfiable,
 
 # get the variable of ex
 # get the operators of lemma
@@ -146,8 +172,8 @@ class SyGusQueryGen:
         if Config_use_trans or Config_use_Fminus2_imply:
           assert (isinstance(F_idx_minus2,list))
         else:
-          print ('Please note: F_idx_minus2 is not used!')
-          assert (F_idx_minus2 is None)
+          print ('[SyGuS] Warning: please note, F_idx_minus2 is not used!')
+          # assert (F_idx_minus2 is None)
 
         self.allvars      = sorted_allvars
         self.prime_vars   = sorted_prime_vars
@@ -344,8 +370,8 @@ class SyGusQueryGen:
                         # alert 
                         print ('Warning: expand V for facts')
                         print (statement)
-                        assert (False) # warning 
-            statement += ')))'
+                        # assert (False) # warning 
+            statement += '))'
             facts_stx.append(statement)
 
             #facts_stx.append( \

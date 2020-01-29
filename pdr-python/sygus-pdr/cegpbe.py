@@ -93,8 +93,8 @@ class CexGuidedPBE:
       # itp is used for opextract
       # ctg is used for vars
       #itp, ctg, facts, blocked_cexs): # allvars, prime_vars
-        assert (len(facts) > 0)
-        assert (len(blocked_cexs) > 0 )
+        assert (len(facts_on_inv_vars) > 0)
+        assert (len(cexs_on_inv_vars) > 0 )
         # otherwise no need to start such synthesis ? 
         # blocked_cexs can be loosen, from T, F_idx_minus2
 
@@ -109,7 +109,7 @@ class CexGuidedPBE:
           sorted_inv_var_set, sorted_allvars, sorted_prime_vars, \
           op_obj
 
-        self.inv_var_set_prime = set([ prime_map[v] for v in self.self.inv_var_set ])
+        self.inv_var_set_prime = set([ prime_map[v] for v in self.inv_var_set ])
 
         self.solver = Solver() # name = 'btor'
 
@@ -117,6 +117,7 @@ class CexGuidedPBE:
     # synthesize F-2 /\ T ==> INV
 
     def syn_one_instance(self, new_facts, timeout = None):  # add init config
+        print (self.facts_on_inv_vars + new_facts)
         sygus_query = SyGusQueryGen ( 
           primal_vars = self.primal_vars, prime_vars = self.prime_vars, \
           T = self.T, F_idx_minus2 = self.F_idx_minus2, \
@@ -130,15 +131,20 @@ class CexGuidedPBE:
           now = datetime.now()
           suffix = now.strftime("%Y-%m-%d-%H-%M-%S")
         query_fn = 'sygus_queries/q' + suffix + '.sygus'
-        result_fn = 'sygus_queries/qa' + suffix + '.sygus'
+        result_fn = 'sygus_queries/q' + suffix + '-a.sygus'
 
         sygus_query.gen_sygus_query( query_fn )
 
         with open(result_fn, "w") as outf: # TIMEOUT
-          subprocess.call([Config_cvc4_path, query_fn], stdout=outf)
+          subprocess.call([Config_cvc4_path, '--lang=sygus2' , query_fn], stdout=outf)
 
-        itp = FuncParser( result_fn , self.sorted_inv_var_set )
-        return itp
+        with open(result_fn) as fin:
+          result = fin.readline()
+          if 'unsat' in result:
+            func = fin.read()
+            itp = FuncParser( func , self.sorted_inv_var_set )
+            return itp
+        return None
 
     def syn_loop(self, fidx = None, lidx = None, itp = None, frame_dump = None ):
         if Config_debug_dump:
@@ -149,30 +155,34 @@ class CexGuidedPBE:
             fout.write('Lidx: ' + str(fidx) + '\n')
             fout.write('Itp: ' + itp.serialize() if itp else 'None' + '\n')
             fout.write('--------------------------\n')
-            fout.write(frame_dump)
+            fout.write(str(frame_dump))
 
         new_facts = []
 
         while True:
           itp = self.syn_one_instance(new_facts)
+          print ('[CexGuidedPBE] get sygus result:', itp.serialize() if itp is not None else 'None')
+          if itp is None:
+            return None
+            # sygus failed : unknown
 
           # if 
-          m1 = self.solve(Not(Implies( self.F_idx_minus2, itp)), keep_vars = self.inv_var_set)
+          m1 = self.solve(Not(Implies( And(self.F_idx_minus2), itp)), keep_vars = self.inv_var_set)
           if m1 is not None:
             assert (len(m1) > 0) # other wise , we are dropping too many variables, cannot be
             assert (m1 not in new_facts)
             # TODO: FIXME
             # new cex 
-            new_facts.append( m1 )
+            new_facts.append( dict(m1) )
             continue
 
           itp_prime_var = itp.substitute(self.prime_map)
-          m2 = self.solve(Not(Implies( And(self.F_idx_minus2, self.T), itp_prime_var)), keep_vars = self.inv_var_set_prime)
+          m2 = self.solve(Not(Implies( And(self.F_idx_minus2 + [self.T]), itp_prime_var)), keep_vars = self.inv_var_set_prime)
           if m2 is not None:
             assert (len(m2) > 0) # other wise , we are dropping too many variables, cannot be
             assert (m2 not in new_facts)
             # replace to 
-            new_facts.append( m1.substitute(primal_map) )
+            new_facts.append( { self.primal_map[v] : val for v, val in m2 } )
             continue
 
           assert (m1 is None and m2 is None)

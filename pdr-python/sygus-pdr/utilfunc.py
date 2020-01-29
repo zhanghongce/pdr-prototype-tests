@@ -10,26 +10,6 @@ def _get_cubes_with_more_var(cubes, vset):
   # sort based on variable
   return [dict(cube) for cube in cubes if _get_var(cube).issuperset(vset)]
 
-def _sanity_check_no_conflict(facts, blocked, vset):
-  solver = Solver()
-  for cube in facts:
-    # facts with more vars
-    solver.add_assertion(And([EqualsOrIff(v,val) for v,val in cube.items() if v in vset]))
-
-  for cube in blocked:
-    solver.add_assertion(Not(And([EqualsOrIff(v,val) for v,val in cube.items() if v in vset])))
-  
-  satisfiable = solver.solve()
-  if not satisfiable:
-    print ('cex and facts conflicts: unsat!')
-    print ('----Facts----')
-    for cube in facts:
-      print (cube)
-    print ('----Blocks----')
-    for cube in blocked:
-      print (cube)
-      
-  assert ( satisfiable ) # we expect it is satisfiable,
 
 def _get_unified_width(v): # bool 0, bv ... 
   if v.get_type().is_bool_type():
