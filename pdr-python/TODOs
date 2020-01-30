@@ -1,0 +1,4 @@
+- use btor when possible
+- when not needed, don't enunemrate model in solve
+
+
