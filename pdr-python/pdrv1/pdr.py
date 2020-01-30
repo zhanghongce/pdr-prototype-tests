@@ -22,6 +22,7 @@ def next_var(v):
 
 Config_Max_Frame = 10000000
 Config_use_itp_in_pushing = True
+Config_analyze_use_itp_in_pushing = True
 Config_debug = False
 Config_partial_model = True
 Config_simplify_itp = True
@@ -275,6 +276,8 @@ class PDR(object):
 
             if ex is None: # no bad state, lemma is still valid
                 if lemma not in self.frames[fidx+1]:
+                    # may have been pushed by get_bad_state_from_property_invalid_after_trans
+                    # as the ITP could be the same
                     self.frames[fidx+1].append(lemma)
                     self.min_cex_frames_changed = min(fidx+1,self.min_cex_frames_changed)
                 print ('  [push_lemma F%d] Succeed in pushing l%d!'%(fidx, lemmaIdx))
@@ -360,6 +363,7 @@ class PDR(object):
                 return True
         return False
 
+    # used in push_lemma, check_property, check_init_faile
     def get_bad_state_from_property_invalid_after_trans(self, prop, idx, remove_vars = [], keep_vars = None):
         """Extracts a reachable state that intersects the negation
         of the property and the last current frame"""
@@ -380,6 +384,14 @@ class PDR(object):
                 if self.solve( Not(Implies(And(self.frames[idx]), itp) )) is not None:
                     self._add_lemma_to_all_prev_frame( end_frame_id = idx, lemma = itp )
                     print ('    [F%d -> prop] add ITP to F1 ->>- F%d: ' % (idx, idx), itp.serialize())
+
+                if Config_analyze_use_itp_in_pushing:
+                    if prop == itp:
+                        print ('    [F%d -> prop] add ITP to F%d: repeated ITP, no use' % (idx, idx+1))
+                    elif self.solve(Not(EqualsOrIff(itp, prop))) is not None:
+                        print ('    [F%d -> prop] add ITP to F%d: itp =/= prop, strictly stronger' % (idx, idx+1))
+                    else:
+                        print ('    [F%d -> prop] add ITP to F%d: itp == prop, no use' % (idx, idx+1))
 
                 pause()
                 input()
@@ -406,6 +418,7 @@ class PDR(object):
 
 
     # you may want to have the interpolant here
+    # used in recursive_block  and  get_bad_state_from_property_invalid_after_trans
     def solveTrans(self, prevF, T, prop , variables, remove_vars = [], keep_vars = None, findItp = False):
         # prevF /\ T(p, prime) --> not prop, if sat
         print ('      [solveTrans] Property:', prop.serialize())
@@ -532,7 +545,8 @@ class PDR(object):
                 if self.solve( Not(Implies(And(self.frames[fidx-1]), itp) )) is not None:
                     self._add_lemma_to_all_prev_frame( end_frame_id = fidx-1, lemma = itp )
                     print ('    [block] add ITP to F1 ->>- F%d: ' % (fidx-1), itp.serialize())
-                    
+                    input ()
+
                 if itp not in self.frames[fidx]:
                     self.frames[fidx].append(itp)
                     self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
