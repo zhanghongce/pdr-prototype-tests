@@ -26,6 +26,7 @@ Config_analyze_use_itp_in_pushing = True
 Config_debug = False
 Config_partial_model = True
 Config_simplify_itp = True
+Config_rm_cex_in_prev = True
 
 def pause():
     if Config_debug:
@@ -427,6 +428,7 @@ class PDR(object):
 
         if self.solver.solve( prevF + [T, Not( prop.substitute(self.prime_map))] ):
             model = self.solver.get_model()
+            print ('      [solveTrans] full model:', model)
             retL = []
             for v, val in model:
                 if v not in variables: # if it is prime variable
@@ -534,7 +536,15 @@ class PDR(object):
             # Question: too old itp? useful or not?
             # push on older frames also? for new ITP?
             print ('      [block] check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
-            model, itp = self.solveTrans(self.frames[fidx-1], \
+            
+            if Config_rm_cex_in_prev:
+                if (self.solve( \
+                        And([self.system.init] +  [EqualsOrIff(v,val) for v,val in cex])) is not None):
+                    print ('      [block] CEX is reachable -- direct init!')
+                    input ()
+                    return False
+                    
+            model, itp = self.solveTrans(self.frames[fidx-1] + ([prop] if Config_rm_cex_in_prev else []), \
                 T = self.system.trans, prop = prop, \
                 variables = self.system.variables, \
                 remove_vars = remove_vars, keep_vars = keep_vars, findItp = True )
