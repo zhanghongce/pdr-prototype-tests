@@ -7,3 +7,4 @@
 
 - use init in sygus ?
 
+- fast solve using btor if model is not necessary

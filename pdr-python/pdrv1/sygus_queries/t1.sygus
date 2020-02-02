@@ -49,10 +49,17 @@
 (declare-var inpP (_ BitVec 4))
 (declare-var ldenP (_ BitVec 1))
 
-(constraint (=> (and (Fminus2 baseV addrV cntV inpV ldenV) (Tr baseV addrV cntV inpV ldenV baseP addrP cntP inpP ldenP)) (INV addrP baseP cntP inpP ldenP)))
-(constraint (=> (Fminus2 baseP addrP cntP inpP ldenP) (INV addrP baseP cntP inpP ldenP)))
 
-(constraint (=> (INV addrP baseP cntP inpP ldenP) (Itp baseP addrP cntP inpP ldenP)))
+(constraint (not (INV #b0000 #b1000 #b0000 #b0000 #b0)))
+(constraint (not (INV #b1000 #b1000 #b0010 #b0000 #b0)))
+(constraint (not (INV #b1001 #b1000 #b0000 #b1010 #b0)))
+(constraint (not (INV #b1001 #b1000 #b0011 #b1000 #b0)))
+(constraint (INV #b1001 #b1000 #b0001 #b1000 #b0))
+
+(constraint (=> (and (Fminus2 baseV addrV cntV inpV ldenV) (Tr baseV addrV cntV inpV ldenV baseP addrP cntP inpP ldenP) (INV addrV baseV cntV inpV ldenV)) (INV addrP baseP cntP inpP ldenP)))
+; (constraint (=> (Fminus2 baseP addrP cntP inpP ldenP) (INV addrP baseP cntP inpP ldenP)))
+
+; (constraint (=> (INV addrP baseP cntP inpP ldenP) (Itp baseP addrP cntP inpP ldenP)))
 
 (check-synth)
 

@@ -68,7 +68,7 @@
 (constraint (not (INV #b1001 #b1000 #b0000)))
 (constraint (not (INV #b1001 #b1000 #b0011)))
 (constraint (INV #b1001 #b1000 #b0001))
-(constraint (=> (and (Init addrV baseV cntV inpV ldenV) (Tr addrV baseV cntV inpV ldenV addrP baseP cntP inpP ldenP)) (INV addrP baseP cntP)))
+(constraint (=> (and (Init addrV baseV cntV inpV ldenV) (Tr addrV baseV cntV inpV ldenV addrP baseP cntP inpP ldenP) (INV addrV baseV cntV)) (INV addrP baseP cntP)))
 (constraint (=> (Init addrP baseP cntP inpP ldenP) (INV addrP baseP cntP)))
 
 (check-synth)

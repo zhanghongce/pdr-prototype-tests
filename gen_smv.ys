@@ -1,0 +1,8 @@
+read_verilog -formal cnt-arb.v
+prep -top cnt
+miter -assert cnt
+flatten
+sim -clock clk -reset rst -n 1 -w cnt
+memory -nordff
+opt_clean
+write_smv cnt.smv

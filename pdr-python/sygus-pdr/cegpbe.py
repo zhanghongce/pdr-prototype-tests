@@ -146,6 +146,19 @@ class CexGuidedPBE:
             return itp
         return None
 
+    def cex_to_current_next_var(self, cex):
+        cur_all_var = []
+        cur = []
+        nxt = []
+        for v, val in cex:
+          if v in self.primal_vars:
+            cur_all_var.append((v,val))
+            if v in self.inv_var_set:
+              cur.append( (v,val) )
+          elif v in self.inv_var_set_prime:
+            nxt.append( (v, val) )
+        return cur_all_var, cur, nxt
+
     def syn_loop(self, fidx = None, lidx = None, itp = None, frame_dump = None ):
         if Config_debug_dump:
           now = datetime.now()

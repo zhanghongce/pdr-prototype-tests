@@ -63,8 +63,16 @@
 (constraint (not (INV #b1001 #b1000 #b0000 #b1010 #b0)))
 (constraint (not (INV #b1001 #b1000 #b0011 #b1000 #b0)))
 (constraint (INV #b1001 #b1000 #b0001 #b1000 #b0))
+
+; so you can make it the similar way... ? no, you need to care about the relational init case
+; (constraint (INV #b0000 #b0000 #b0000 inpV ldenV))   ; using this one takes 9s
+; using the below one also takes 9s
 (constraint (=> (and (Init addrV baseV cntV inpV ldenV) (Tr addrV baseV cntV inpV ldenV addrP baseP cntP inpP ldenP)) (INV addrP baseP cntP inpP ldenP)))
 (constraint (=> (Init addrP baseP cntP inpP ldenP) (INV addrP baseP cntP inpP ldenP)))
 
 (check-synth)
 
+
+;~/cvc-installs/latest/bin/cvc4 --lang=sygus2 idx-init.sygus 
+;unsat
+;(define-fun INV ((addr (_ BitVec 4)) (base (_ BitVec 4)) (cnt (_ BitVec 4)) (inp (_ BitVec 4)) (lden (_ BitVec 1))) Bool (= (bvadd base cnt) addr))
