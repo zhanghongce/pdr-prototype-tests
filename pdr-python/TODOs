@@ -1,4 +1,9 @@
 - use btor when possible
 - when not needed, don't enunemrate model in solve
 
+- assumptions : add to all frame ?
+- array: blackbox ?
+- variable set : too constrained? trial and error ?
+
+- use init in sygus ?
 

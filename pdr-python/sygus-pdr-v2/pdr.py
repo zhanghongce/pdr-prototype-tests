@@ -24,11 +24,12 @@ def next_var(v):
 
 Config_Max_Frame = 10000000
 Config_use_itp_in_pushing = False
+Config_analyze_use_itp_in_pushing = True
 Config_debug = True
 Config_partial_model = True
 Config_simplify_itp = True
-Config_analyze_use_itp_in_pushing = True
 Config_rm_cex_in_prev = True
+Config_push_facts = True
 
 def pause():
     if Config_debug:
@@ -142,31 +143,40 @@ class PDR(object):
 
         self.cexs_pushed_idxs_map = {} # n->idx+1 tried
         self.frames_pushed_idxs_map = {} # n->idx+1 tried
+        self.facts_pushed_idxs_map = {} # n->idx+1 tried
         self.min_cex_frames_changed = Config_Max_Frame
         # map: v --> next_v
 
-    def dump_frames(self):
-        print ('---------- Frames DUMP ----------')
+    def dump_frames(self, toStr = False):
+        retS = []
+        def _printStr(*argl, **argd):
+            if (toStr):
+                retS.append( ''.join ( argl ) )
+            else:
+                print(*argl, **argd)
+
+        _printStr ('---------- Frames DUMP ----------')
         for fidx,f in enumerate(self.frames):
-            print ('Frame : %d'%fidx)
+            _printStr ('Frame : %d'%fidx)
             for lidx, lemma in enumerate(f):
                 ptr = '*' if self.frames_pushed_idxs_map.get(fidx,0) == lidx else ' '
-                print ('  %s l%d: ' % (ptr,lidx) , lemma.serialize())
+                _printStr ('  %s l%d: ' % (ptr,lidx) , lemma.serialize())
             if self.frames_pushed_idxs_map.get(fidx,0) == lidx + 1:
-                print ('    all tried to push')
+                _printStr ('    all tried to push')
 
             if fidx in self.cexs_blocked:
-                print ('  CEX blocked # : %d'% len(self.cexs_blocked[fidx]) )
+                _printStr ('  CEX blocked # : %d'% len(self.cexs_blocked[fidx]) )
                 for cidx, cex in enumerate(self.cexs_blocked[fidx]):
                     ptr = '*' if self.cexs_pushed_idxs_map.get(fidx,0) == cidx else ' '
-                    print ('  %s c%d: ' % (ptr, cidx), self.print_cube(cex) )
+                    _printStr ('  %s c%d: ' % (ptr, cidx), self.print_cube(cex) )
                 if self.cexs_pushed_idxs_map.get(fidx,0) == cidx + 1:
-                    print ('    all tried to push')
+                    _printStr ('    all tried to push')
             if fidx in self.unblockable_fact:
-                print ('  facts # : %d'% len(self.unblockable_fact[fidx]) )
+                _printStr ('  facts # : %d'% len(self.unblockable_fact[fidx]) )
                 for cidx, fact in enumerate(self.unblockable_fact[fidx]):
-                    print ('    f%d: ' % cidx, self.print_cube(fact) )
-        print ('---------- END Frames DUMP ----------')
+                    _printStr ('    f%d: ' % cidx, self.print_cube(fact) )
+        _printStr ('---------- END Frames DUMP ----------')
+        return '\n'.join(retS)
 
     def _add_cex(self, cex, fidx):
         if fidx not in self.cexs_blocked:
@@ -198,7 +208,7 @@ class PDR(object):
 
 
     def check_init_failed(self, prop, remove_vars, keep_vars):
-        init_cex = self.solve(And(self.frames[0] + [ Not(prop) ] ))
+        init_cex = self.solve(self.frames[0] + [ Not(prop) ] )
         print ("[Checking init] F0 and not P")
         if init_cex is not None:
             print("[Checking init] Property failed at INIT")
@@ -250,6 +260,10 @@ class PDR(object):
                     print("[Checking property] Adding frame %d..." % (len(self.frames)))
                     self.frames.append([])
                     self.push_lemma_from_the_lowest_frame(remove_vars, keep_vars) # TODO
+                    if self.is_last_two_frames_inductive():
+                        print("[Checking property] The system is safe, frame : %d" % len(self.frames) )
+                        return True
+                        
                     # you should try to push existing clauses
     
     # TODO: problem : INIT -> next frame ????
@@ -264,35 +278,73 @@ class PDR(object):
         for fidx in range(start_frame, len(self.frames)-1):
             self.push_lemma_from_frame(fidx, remove_vars, keep_vars)
 
+    def get_pre_post_state_from_property_invalid_after_trans(self, prop, fidx, T, variables, remove_vars, keep_vars ):
+        prevF = self.frames[fidx]
+        print ('      [pre_post_p_trans] Property:', prop.serialize())
+        print ('      [pre_post_p_trans] var will => prime')
+        print ('      [pre_post_p_trans] prevF:', prevF)
+
+        pre_ex = []
+        post_ex = []
+
+        if self.solver.solve( prevF + [T, Not( prop.substitute(self.prime_map))] ):
+            model = self.solver.get_model()
+            for v, val in model:
+                if v in variables: # pre_ex
+                    if v in remove_vars:
+                        continue
+                    if isinstance(keep_vars, list) and len(keep_vars) > 0 and v not in keep_vars:
+                        continue
+                    pre_ex.append((v,val))
+                else:
+                    v_primal = self.primal_map[v]
+                    if v_primal in remove_vars:
+                        continue
+                    if isinstance(keep_vars, list) and len(keep_vars) > 0 and v_primal not in keep_vars:
+                        continue
+                    post_ex.append((v_primal,val))
+            assert (len(pre_ex) > 0 and len(post_ex) > 0)
+            return pre_ex, post_ex
+                #
+        return None, None # pre/post ex: None
+
+    def shrink_var_cexs(self, cexs, fidx, varset, remove_vars, keep_vars):
+        small_cexs = []
+        for cube in cexs:
+            if _get_var(cube).issubset(varset):
+                small_cexs.append(dict(cube))
+
+            small_cube = []
+            for v, val in cube:
+                if v in varset:
+                    small_cube.append((v, val))
+            assert (len(small_cube) > 0)
+            if self.recursive_block(small_cube, fidx, remove_vars = remove_vars, keep_vars = keep_vars):
+                small_cexs.append(dict(small_cube))
+        print ('  [shrink_var_cexs on F%d] get %d/%d after shrink' % (fidx,len(small_cexs), len(cexs)))
+        return small_cexs
+
 
     def push_lemma_from_frame(self, fidx, remove_vars, keep_vars):
 
-        # returns  None (succ), [] (unknown) , ex (facts)
-        def _push_lemma(lemma, fidx, remove_vars, keep_vars ):
-            ex = self.get_bad_state_from_property_invalid_after_trans(lemma, fidx, remove_vars, keep_vars )
-
-            if ex is None: # no bad state, lemma is still valid
-                if lemma not in self.frames[fidx+1]:
-                    # may have been pushed by get_bad_state_from_property_invalid_after_trans
-                    # as the ITP could be the same
-                    self._add_lemma(lemma = lemma, fidx = fidx+1)
-                return ex
-
-            else:
-                print ('  [push_lemma F%d] find cex@F%d : %s' % (fidx, fidx, self.print_cube(ex)))
-                if self.recursive_block(ex, fidx, remove_vars, keep_vars ):
-                    #lemmas_to_try.append(lemma)
-                    return [] # retry in the next round
-                    # if blocked so what? retry
-                else:
-                    return ex
-
-
+        #... think about push facts ??? 
         assert (len(self.frames) > fidx+1)
         if (len(self.cexs_blocked.get(fidx,[])) == 0): # else no cex to push
             print ('  [push_lemma from F%d] <WARN> no cex to push from F%d'%(fidx,fidx))
             pause ()
         #assert (fidx in self.cexs_blocked)
+
+        if Config_push_facts:
+            if fidx in self.unblockable_fact:
+                start_fact_idx = self.facts_pushed_idxs_map.get(fidx, 0)
+                end_fact_idx = len(self.unblockable_fact[fidx])
+                for factIdx in range(start_fact_idx, end_fact_idx):
+                    fact = self.unblockable_fact[fidx][factIdx]
+                    # once a fact always a fact
+                    assert (not self.recursive_block(fact, fidx+1, remove_vars, keep_vars))
+                    if fact not in self.unblockable_fact.get(fidx+1,[]):
+                        self._add_fact(fact = fact, fidx = fidx + 1)
+
         
         if fidx in self.cexs_blocked:
             start_cexs_idx = self.cexs_pushed_idxs_map.get(fidx,0)
@@ -312,126 +364,115 @@ class PDR(object):
 
         start_lemma_idx = self.frames_pushed_idxs_map.get(fidx, 0)
         end_lemma_idx   = len(self.frames[fidx]) # we can decide if we want to update this
-        lemmaIdx = start_lemma_idx
-        while lemmaIdx != end_lemma_idx:
+
+        for lemmaIdx in range(start_lemma_idx, end_lemma_idx):
             lemma = self.frames[fidx][lemmaIdx]
             print ('  [push_lemma F%d] Try pushing lemma l%d to F%d: ' % (fidx, lemmaIdx, fidx+1) , (lemma.serialize()))
 
-            ex = []
-            while (ex is not None) and len(ex) == 0: # try push
-                ex = _push_lemma(lemma, fidx, remove_vars, keep_vars)
-                if ex is None:
-                    print ('  [push_lemma F%d] Succeed in pushing l%d!'%(fidx, lemmaIdx))
-                    print ('  [push_lemma F%d] And we add its ITP!'%fidx)
-                    lemmaIdx += 1 # try next one
-                    continue
             
-            assert (ex is not None and len(ex) > 0)
-            print ('  [push_lemma F%d] fail due to fact'%fidx , self.print_cube(ex))
-            self._add_fact(fact=ex, fidx=fidx) ???? you need to update this facts on next frame !
+            while True: # try push
 
-            # IMPROVEMENT: per vars not per failed instance
+                prev_ex, post_ex = \
+                    self.get_pre_post_state_from_property_invalid_after_trans(prop = lemma, fidx = fidx, \
+                    T = self.system.trans, variables = self.system.variables, \
+                    remove_vars = remove_vars, keep_vars = keep_vars )
 
-            # --------- SYGUS --------- #
-            inv_var_set = _get_var(ex)
-            sorted_inv_var_set = sorted(list(inv_var_set), key = lambda x: x.symbol_name())
-            blocked_cexs = self.cexs_blocked.get(fidx,[])
-            facts = self.unblockable_fact[fidx]
-            facts_on_inv_vars = _get_cubes_with_more_var(facts, inv_var_set)
-            cexs_on_inv_vars = _get_cubes_with_fewer_var(blocked_cexs, inv_var_set)
-            sorted_allvars = sorted(self.system.variables, key = lambda x: x.symbol_name())
-            sorted_prime_vars = sorted(self.system.prime_variables, key = lambda x: x.symbol_name())
+                if prev_ex is None: # post_ex should be none also
+                    assert (post_ex is None)
+                    print ('  [push_lemma F%d] Succeed in pushing l%d!'%(fidx, lemmaIdx))
+                    if Config_use_itp_in_pushing:
+                        print ('  [push_lemma F%d] And we add its ITP!'%fidx) # do we really do this?
+                    if lemma not in self.frames[fidx+1]:
+                        self._add_lemma(lemma = lemma, fidx = fidx + 1)
+                    break
 
-            opextract = OpExtractor() # work on itp 
-            opextract.walk(lemma)
+                print ('  [push_lemma F%d] Get pre cex:'%(fidx), prev_ex)
+                # prev_ex is not None
+                # try recursive block
+                if prev_ex not in self.unblockable_fact.get(fidx,[]):
+                    if self.recursive_block(prev_ex, fidx, remove_vars, keep_vars ):
+                        print ('  [push_lemma F%d] cex blocked:'%(fidx))
+                        continue # try in next round
+                    # else recursive block failed
+                    # put it in the fact
+                    print ('  [push_lemma F%d] fail due to pre-fact :'%fidx , self.print_cube(prev_ex))
+                    print ('  [push_lemma F%d] post-fact :'%fidx , self.print_cube(post_ex))
+                    self._add_fact(fact=prev_ex, fidx=fidx)
+                self._add_fact(fact=post_ex, fidx=fidx+1)
+                # or it is in the fact
+                # then we know this lemma is a bad one
+                # so let's repair it
 
-            assert (len(facts) > 0) # other wise, we can skip this
+                # IMPROVEMENT: variable set change below
 
-            cex_guided_pbe = CexGuidedPBE( \
-                primal_vars = self.system.variables,
-                prime_vars  = self.system.prime_variables,
-                primal_map  = self.primal_map, # next_v --> v
-                prime_map   = self.prime_map, # v --> next_v
-                T =  self.system.trans,
-                F_idx_minus2 =  self.frames[fidx],
-                Init = self.system.init, # IMPROVEMENT: Use init
-                inv_var_set = inv_var_set, # we can change this if necessary
-                facts_on_inv_vars = facts_on_inv_vars,
-                cexs_on_inv_vars = cexs_on_inv_vars,
-                sorted_inv_var_set = sorted_inv_var_set,
-                sorted_allvars = sorted_allvars,
-                sorted_prime_vars = sorted_prime_vars,
-                op_obj = opextract \
-                )
+                inv_var_set = _get_var(post_ex)
+                sorted_inv_var_set = sorted(list(inv_var_set), key = lambda x: x.symbol_name())
+                blocked_cexs = self.cexs_blocked.get(fidx+1,[]) # fidx+1 is fewer cex
+                facts = self.unblockable_fact[fidx+1]             # facts should be more facts
+                facts_on_inv_vars = _get_cubes_with_more_var(facts, inv_var_set)
+                cexs_on_inv_vars = self.shrink_var_cexs(cexs = blocked_cexs, fidx = fidx, varset = inv_var_set, \
+                    remove_vars = remove_vars, keep_vars = keep_vars) 
+                #cexs_on_inv_vars = _get_cubes_with_fewer_var(blocked_cexs, inv_var_set)
+                sorted_allvars = sorted(self.system.variables, key = lambda x: x.symbol_name())
+                sorted_prime_vars = sorted(self.system.prime_variables, key = lambda x: x.symbol_name())
 
-            new_facts = []
-            while True:
-                itp = cex_guided_pbe.syn_one_instance(new_facts)
-                print ('[CexGuidedPBE] get sygus result:', itp.serialize() if itp is not None else 'None')
+                opextract = OpExtractor() # work on itp 
+                opextract.walk(lemma)
+
+                self.dump_frames()
+                print ('  [push_lemma F%d] Invoke SyGuS Now:'%(fidx))
+                print ('----------------\nvarset:\n',inv_var_set)
+                print ('----------------\ncex:\n',   cexs_on_inv_vars)
+                print ('----------------\nfacts:\n', facts_on_inv_vars)
+                if (len(cexs_on_inv_vars) == 0 or len(facts_on_inv_vars) == 0):
+                    print ('  [push_lemma F%d] WARNING: no cex! skip sygus'%(fidx))
+                    input ()
+                    break
+
+
+
+                cex_guided_pbe = CexGuidedPBE( \
+                    primal_vars = self.system.variables,
+                    prime_vars  = self.system.prime_variables,
+                    primal_map  = self.primal_map, # next_v --> v
+                    prime_map   = self.prime_map, # v --> next_v
+                    T =  self.system.trans,
+                    F_idx_minus2 =  self.frames[fidx],
+                    Init = self.system.init, # IMPROVEMENT: Use init
+                    inv_var_set = inv_var_set, # we can change this if necessary
+                    facts_on_inv_vars = facts_on_inv_vars,
+                    cexs_on_inv_vars = cexs_on_inv_vars,
+                    sorted_inv_var_set = sorted_inv_var_set,
+                    sorted_allvars = sorted_allvars,
+                    sorted_prime_vars = sorted_prime_vars,
+                    op_obj = opextract \
+                    )
+
+                # lemma /\ F /\ T => lemma'
+                itp = cex_guided_pbe.syn_lemma_F_T_implies_lemma_prime(fidx = fidx, lidx = lemmaIdx, itp = lemma, \
+                    frame_dump = self.dump_frames(toStr = True))
+
                 if itp is None:
-                    break # [CexGuidedPBE] failed
+                    print ('  [push_lemma F%d] Repair lemma l%d failed: ' % (fidx, lemmaIdx))
+                    break # syn failed
 
+                # TODO : assert (lemma /\ F /\ T => lemma')
                 itp_prime_var = itp.substitute(cex_guided_pbe.prime_map)
-
-                cex = self.solve(Not(Implies( And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var)))
-
-                while cex is not None:
-                    assert (len(cex) > 0)
-                    cex_current, cex_current_inv_var, cex_next_frame = cex_guided_pbe.cex_to_current_next_var(cex)
-                    # get ...
-                    # cex_current
-                    # cex_next_frame
-                    assert (len(cex_current) > 0)
-                    assert (len(cex_current_inv_var) > 0)
-                    assert (len(cex_next_frame) > 0)
-
-                    if not self.recursive_block(cex_current, fidx, remove_vars, keep_vars ):
-                        break # failed
-
-                    cex = self.solve(Not(Implies( And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var)))
-                else:
-                    # we eliminate the counter examples
-                    # our proposed lemma is good
-                    self._add_lemma(lemma = itp , fidx = fidx + 1)
-                    self._add_lemma_to_all_prev_frame(end_frame_id = fidx, lemma = itp)
-                    break # we can end the cex-guided-pbe loop
-
-                # recursive block failed: now we need to add a new 
-                .... you need to do something here!
-                
+                md = self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) )
+                #if md is not None:
+                #    print (md)
+                assert (self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) ) is None )
+                # if not (F[fidx-1]) => itp
+                #   add to all previous frames
+                self._add_lemma(lemma = itp, fidx = fidx+1)
+                if (self.solve(Not(Implies(And(self.frames[fidx-1]), itp))) is not None):
+                    print ('  [push_lemma F%d] New to add to all prev frame '%(fidx) )
+                    self.frames[fidx][lemmaIdx] = And(lemma, itp)
+                    self._add_lemma_to_all_prev_frame(end_frame_id = fidx-1, lemma = itp)
+                break
 
 
 
-
-
-
-
-
-            new_lemma = cex_guided_pbe.syn_loop()
-
-
-            if new_lemma is None:
-                print ('  [push_lemma F%d] SyGuS on l%d failed to gen candidate!'%(fidx, lemmaIdx))
-                lemmaIdx += 1 # try next one
-                continue
-
-            # IMPROVEMENT : recursively do this
-            ex = []
-            while (ex is not None) and len(ex) == 0: # try push
-                ex = _push_lemma(new_lemma, fidx, remove_vars, keep_vars)
-                if ex is None:
-                    print ('  [push_lemma F%d] Succeed in pushing l%d!'%(fidx, lemmaIdx))
-                    print ('  [push_lemma F%d] And we add its ITP!'%fidx)
-                    lemmaIdx += 1 # try next one
-                    continue
-            
-            assert (ex is not None and len(ex) > 0)
-
-
-            print ('  [push_lemma F%d] SyGuS on l%d failed to gen pushable candidate!'%(fidx, lemmaIdx))
-            print ('  [push_lemma F%d] SyGuS on l%d get: %s'%(fidx, lemmaIdx, new_lemma.serialize()))
-            print ('  [push_lemma F%d] Failed by fact'%(fidx, lemmaIdx, new_lemma.serialize()))
-            pause()
 
             # get an itp and try to push it
             # if  there is new fact, redo this
@@ -504,13 +545,13 @@ class PDR(object):
 
             if Config_analyze_use_itp_in_pushing:
                 if prop == itp:
-                    print ('    [F%d -> prop] add ITP to F%d: repeated ITP, no use' % (idx, idx+1))
+                    print ('    [F%d -> prop] compare ITP @ F%d: repeated ITP, no use' % (idx, idx+1))
                 elif self.solve(Not(EqualsOrIff(itp, prop))) is not None:
-                    print ('    [F%d -> prop] add ITP to F%d: itp =/= prop, strictly stronger' % (idx, idx+1))
+                    print ('    [F%d -> prop] compare ITP @ F%d: itp =/= prop, strictly stronger' % (idx, idx+1))
                 else:
-                    print ('    [F%d -> prop] add ITP to F%d: itp == prop, no use' % (idx, idx+1))
+                    print ('    [F%d -> prop] compare ITP @ F%d: itp == prop, no use' % (idx, idx+1))
 
-            pause()
+            #pause()
         return md
 
 
@@ -518,7 +559,9 @@ class PDR(object):
         """Provides a satisfiable assignment to the state variables that are consistent with the input formula"""
         # you should know to drop variables here
         # plus tenary simulation ? ast-walker
-        if self.solver.solve([formula]):
+        if not isinstance(formula, list):
+            formula = [formula]
+        if self.solver.solve(formula):
             retL = []
             for v, val in self.solver.get_model():
                 if v in remove_vars:
@@ -563,7 +606,7 @@ class PDR(object):
             if Config_simplify_itp:
                 Itp = simplify(Itp)
             print ('    [solveTrans] get itp: ', Itp.serialize())
-            pause()
+            #pause()
         return None, Itp
 
 
@@ -626,7 +669,7 @@ class PDR(object):
         print ('      [block] Try @F%d' % idx, self.print_cube(cube) )
 
         prop = Not(And([EqualsOrIff(v,val) for v,val in cube]))
-        if self.solve(And(self.frames[idx] + [Not( prop )] )) is None:
+        if self.solve(self.frames[idx] + [Not( prop )] ) is None:
             print ('      [block] already blocked by F%d' % idx)
             pause ()
             return True
@@ -637,7 +680,7 @@ class PDR(object):
 
             if fidx == 0:
                 model_init_frame = self.solve( \
-                    And([self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]))
+                    [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex])
                 assert (model_init_frame is not None)
                 print ('      [block] CEX found!')
                 return False
@@ -649,10 +692,10 @@ class PDR(object):
             print ('      [block] check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
             if Config_rm_cex_in_prev:
                 if (self.solve( \
-                        And([self.system.init] +  [EqualsOrIff(v,val) for v,val in cex])) is not None):
-                print ('      [block] CEX is reachable -- direct init!')
-                input ()
-                return False
+                        [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]) is not None):
+                    print ('      [block] CEX is reachable -- direct init!')
+                    input ()
+                    return False
             
             model, itp = self.solveTrans(self.frames[fidx-1] + ([prop] if Config_rm_cex_in_prev else []), \
                 T = self.system.trans, prop = prop, \

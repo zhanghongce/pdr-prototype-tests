@@ -12,3 +12,7 @@ Config_use_itp_in_pushing = True
 Config_debug = False 
 
 4bits F18 52s
+
+
+To view the profiling
+snakeviz pdr_bvadd.profile
