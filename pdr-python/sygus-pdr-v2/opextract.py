@@ -74,6 +74,7 @@ class OpExtractor(DagWalker):
         self.BvExtracts = {} # result width -> set[(input width, h, l)]
         self.BvRotates = {}   # result width -> set[(op, param)]
         self.BvExts = {}     # result width -> set[(op, param， input width )] op 
+        self.Symbols = set([])
         # comp/eq --> '='
 
         # no need to worry about variables
@@ -82,6 +83,7 @@ class OpExtractor(DagWalker):
         OpExtractor.set_handler(OpExtractor.walk_constant_bv, op.BV_CONSTANT)
         OpExtractor.set_handler(OpExtractor.walk_combine_bool, *op.BOOL_CONNECTIVES)
         OpExtractor.set_handler(OpExtractor.walk_constant_bool, op.BOOL_CONSTANT)
+        OpExtractor.set_handler(OpExtractor.walk_symbol_rec, op.SYMBOL)
 
         # the above must be done first
 
@@ -89,6 +91,9 @@ class OpExtractor(DagWalker):
                            env=env,
                            invalidate_memoization=invalidate_memoization)
 
+    def walk_symbol_rec(self, formula, args, **kwargs):
+        self.Symbols.add( formula )
+                               
     def walk_nop(self, formula, args, **kwargs):
         pass # do nothing
 
@@ -237,6 +242,7 @@ if __name__ == '__main__':
     print (ext.BvExtracts)#
     print (ext.BvRotates)# 
     print (ext.BvExts)# = {
+    print (ext.Symbols)
     print ('-'*10)
     ext.walk(Ite( Or(Not(e1), cnt.Equals(3)) , BVSub(cnt, BV(5,3)),  BVAdd(cnt, BV(4,3))))
     print (ext.BvUnary)# = 
@@ -247,4 +253,5 @@ if __name__ == '__main__':
     print (ext.BvExtracts)#
     print (ext.BvRotates)# 
     print (ext.BvExts)# = {
+    print (ext.Symbols)
     print ('-'*10)
