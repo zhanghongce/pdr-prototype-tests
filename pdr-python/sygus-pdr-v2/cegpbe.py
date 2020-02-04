@@ -15,6 +15,7 @@ import subprocess
 Config_use_init_data = True
 Config_cvc4_path = '/home/hongce/cvc-installs/latest/bin/cvc4'
 Config_debug_dump = True
+Config_cvc4_time_out = 30
 
 
 
@@ -136,8 +137,12 @@ class CexGuidedPBE:
 
         sygus_query.gen_sygus_query( query_fn )
 
-        with open(result_fn, "w") as outf: # TIMEOUT
-          subprocess.call([Config_cvc4_path, '--lang=sygus2' , query_fn], stdout=outf)
+        try:
+          with open(result_fn, "w") as outf: # TIMEOUT
+            subprocess.call([Config_cvc4_path, '--lang=sygus2' , query_fn], stdout=outf, timeout = Config_cvc4_time_out)
+        except subprocess.TimeoutExpired:
+          print ('[CVC4] reports time out.')
+          return None
 
         with open(result_fn) as fin:
           result = fin.readline()

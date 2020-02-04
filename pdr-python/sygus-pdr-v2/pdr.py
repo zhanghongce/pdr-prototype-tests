@@ -149,7 +149,7 @@ class PDR(object):
         # map: v --> next_v
         # itp and cex number mapping
         self.lemma_to_cex_map_perframe = {} # <n , <itp_number , set of (cex_number)>>
-        self.cex_pushed_status = {} # <n, [list of status: idxs pushed and forward map, None unable to push]>
+        self.cex_pushed_status = {} # <n, [list of status: idxs pushed and forward map, None unable to push, '*subsume*']>
         self.cex_origin = {} # <n , <cex number, where it is from: None, reverse map>>
         self.cex_covered_by_pushed_lemmas =  {} # <n , set of (cex id) >
 
@@ -167,7 +167,7 @@ class PDR(object):
             for lidx, lemma in enumerate(f):
                 ptr = '*' if self.frames_pushed_idxs_map.get(fidx,0) == lidx else ' '
                 blocked_cexsIdx = self.lemma_to_cex_map_perframe.get(fidx, dict()).get(lidx, set())
-                _printStr ('  %s l%d: ' % (ptr,lidx) , lemma.serialize(), ' blockes:', str(blocked_cexsIdx))
+                _printStr ('  %s l%d: ' % (ptr,lidx) , lemma.serialize(), '| blockes:', str(blocked_cexsIdx))
             if self.frames_pushed_idxs_map.get(fidx,0) == lidx + 1:
                 _printStr ('    all tried to push')
 
@@ -175,9 +175,10 @@ class PDR(object):
                 _printStr ('  CEX blocked # : %d'% len(self.cexs_blocked[fidx]) )
                 for cidx, cex in enumerate(self.cexs_blocked[fidx]):
                     ptr = '*' if self.cexs_pushed_idxs_map.get(fidx,0) == cidx else ' '
-                    pushed_status = self.cex_pushed_status.get(fidx, dict()).get(cidx, 'Unknown')
+                    pushed_status_list = self.cex_pushed_status.get(fidx, [])
+                    pushed_status = pushed_status_list[cidx] if cidx < len(pushed_status_list) else 'Unknown'
                     origin = self.cex_origin.get(fidx, dict()).get(cidx, 'Unknown')
-                    _printStr ('  %s c%d: ' % (ptr, cidx), self.print_cube(cex), 'PS:', pushed_status, 'O:', origin)
+                    _printStr ('  %s c%d: ' % (ptr, cidx), self.print_cube(cex), '| PS:', str(pushed_status), '| O:', str(origin))
                 if self.cexs_pushed_idxs_map.get(fidx,0) == cidx + 1:
                     _printStr ('    all tried to push')
             if fidx in self.unblockable_fact:
@@ -200,7 +201,7 @@ class PDR(object):
             cexIdx=self.cexs_blocked[fidx].index(cex)
 
         if fidx not in self.cex_origin:
-            self.cex_origin = dict()
+            self.cex_origin[fidx] = dict()
         if self.cex_origin[fidx].get(cexIdx, None) is None:
             self.cex_origin[fidx][cexIdx] = origin
 
@@ -213,7 +214,7 @@ class PDR(object):
             self.frames[fidx].append(lemma)
             self.min_cex_frames_changed = min(self.min_cex_frames_changed, fidx)
             lidx = len(self.frames[fidx])-1
-        else
+        else:
             lidx = self.frames[fidx].index(lemma)
         if fidx not in self.lemma_to_cex_map_perframe:
             self.lemma_to_cex_map_perframe[fidx] = dict()
@@ -232,6 +233,11 @@ class PDR(object):
                 pushed_idx = self.frames_pushed_idxs_map.get(idx, 0)
                 pushed_idx += 1
                 self.frames_pushed_idxs_map[idx] = pushed_idx
+                # fix the lemma_to_cex_map_perframe
+                lidx_to_cidxs_map = list(self.lemma_to_cex_map_perframe.get(idx, dict()).items())
+                self.lemma_to_cex_map_perframe[idx] = dict()
+                for lidx, cidxs in lidx_to_cidxs_map:
+                    self.lemma_to_cex_map_perframe[idx][lidx+1] = cidxs
 
 
     def check_init_failed(self, prop, remove_vars, keep_vars):
@@ -336,6 +342,8 @@ class PDR(object):
         return None, None # pre/post ex: None
 
     def shrink_var_cexs(self, cexs, fidx, varset, remove_vars, keep_vars):
+
+        print ('  [shrink_var_cexs on F%d] get %d before shrink' % (fidx,len(cexs)))
         small_cexs = []
         set_idx_of_cex_blocked = set()
 
@@ -353,20 +361,33 @@ class PDR(object):
             if self.recursive_block(small_cube, fidx, remove_vars = remove_vars, keep_vars = keep_vars, cex_origin = cex_origin):
                 small_cexs.append(dict(small_cube))
                 set_idx_of_cex_blocked.add(cidx)
-                assert (self.blocked_cexs[fidx][-1] == small_cube)
-                set_idx_of_cex_blocked.add(len(self.blocked_cexs[fidx]) - 1)
+
+                if (self.cexs_blocked[fidx][-1] == small_cube):
+                    #self.dump_frames()
+                    #print ('fidx:',fidx, '| cexs:', cexs, '| varset:', varset)
+                    #print ('small_cube: ', str(small_cube))
+                    set_idx_of_cex_blocked.add(len(self.cexs_blocked[fidx]) - 1) # subsume
 
         print ('  [shrink_var_cexs on F%d] get %d/%d after shrink' % (fidx,len(small_cexs), len(cexs)))
         return small_cexs, set_idx_of_cex_blocked
 
     def get_cex_idx(self, cex, fidx):
-        return (self.blocked_cexs[fidx].index(cex))
+        if cex not in self.cexs_blocked[fidx]:
+            return '*subsume*'
+        return (self.cexs_blocked[fidx].index(cex))
 
 
     def push_lemma_from_frame(self, fidx, remove_vars, keep_vars):
 
         #... think about push facts ??? 
         assert (len(self.frames) > fidx+1)
+
+        assert (len(self.frames[fidx]) > 0 )
+
+        start_lemma_idx = self.frames_pushed_idxs_map.get(fidx, 0)
+        end_lemma_idx   = len(self.frames[fidx]) # we can decide if we want to update this
+        # iterate over the lemmas and the cex they blocked, tried to push 
+
         if (len(self.cexs_blocked.get(fidx,[])) == 0): # else no cex to push
             print ('  [push_lemma from F%d] <WARN> no cex to push from F%d'%(fidx,fidx))
             pause ()
@@ -407,11 +428,6 @@ class PDR(object):
         # if len(self.cexs_blocked[fidx]) > end_cex_idx: there are now more cexs to try pushing
         # there could be more cexs to push (we can decide if we want to add a loop here)
 
-        assert (len(self.frames[fidx]) > 0 )
-
-        start_lemma_idx = self.frames_pushed_idxs_map.get(fidx, 0)
-        end_lemma_idx   = len(self.frames[fidx]) # we can decide if we want to update this
-
         unpushed_lemmas = [] # list of (lidx, lemma, prev_ex, post_ex )
 
         for lemmaIdx in range(start_lemma_idx, end_lemma_idx):
@@ -437,8 +453,18 @@ class PDR(object):
                         blocked_cexIdx_in_current_frame = self.lemma_to_cex_map_perframe.get(fidx, dict()).get(lemmaIdx, set())
                         blocked_cexIdx_in_next_frame = set()
                         for cidx in blocked_cexIdx_in_current_frame:
-                            nxt_idx = self.cex_pushed_status.get(fidx,dict()).get(cidx, None)
+
+                            if cidx >= len( self.cex_pushed_status.get(fidx,[]) ):
+                                self.dump_frames()
+                                print ('!!!!!!!!!!!!!!!!!!!')
+                                print (lemmaIdx, lemma.serialize())
+                                print (blocked_cexIdx_in_current_frame)
+                                print (self.cex_pushed_status.get(fidx,[]))
+
+                            nxt_idx = self.cex_pushed_status.get(fidx,[])[cidx]
                             assert (nxt_idx is not None) 
+                            if nxt_idx == '*subsume*':
+                                continue # do not add subsumed cex
                             # it must have been pushed successfully, otherwise, how could the itp pushed succesfully
                             blocked_cexIdx_in_next_frame.add(nxt_idx)
 
@@ -472,97 +498,119 @@ class PDR(object):
                 break 
             # now handle the unpushed altogether
 
-            for lemmaIdx, lemma, prev_ex, post_ex in unpushed_lemmas:
-                # check if we really want to push this
-                # if it has been covered by pushed lemmas, then we should be fine
-                cexIdxs = lemma_to_cex_map_perframe.get(fidx, dict()).get(lemmaIdx, set())
-                assert ( len(cexIdxs) != 0 , "we should not push this kind of lemma")
-                if cexIdxs.issubset( self.cex_covered_by_pushed_lemmas.get(fidx, set()) ):
-                    print ('  [push_lemma F%d] skip l%d :'%fidx , , ' as it has been covered by other successful pushes')
-                    continue
+        for lemmaIdx, lemma, prev_ex, post_ex in unpushed_lemmas:
+            # check if we really want to push this
+            # if it has been covered by pushed lemmas, then we should be fine
+            cexIdxs = self.lemma_to_cex_map_perframe.get(fidx, dict()).get(lemmaIdx, set())
+            if len(cexIdxs) == 0:
+                print ('  [push_lemma F%d] skip l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' no cex value of it is known, skip')
+                continue
+            assert len(cexIdxs) != 0 , "we should not push this kind of lemma"
+            
+            status_list=self.cex_pushed_status.get(fidx,[])
+            allSubsumed = True
+            for cidx in cexIdxs:
+                if cidx < len(status_list):
+                    if status_list[cidx] != '*subsume*':
+                        allSubsumed = False
+                        break
+            if allSubsumed:
+                print ('  [push_lemma F%d] skip l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' its cex has been subsumed.')
+                input ()
+                continue
 
-                # or it is in the fact
-                # then we know this lemma is a bad one
-                # so let's repair it
+            if cexIdxs.issubset( self.cex_covered_by_pushed_lemmas.get(fidx, set()) ):
+                print ('  [push_lemma F%d] skip l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' as it has been covered by other successful pushes')
+                input ()
+                continue
 
-                # IMPROVEMENT: variable set change below
+            print ('  [push_lemma F%d] start repair l%d :'%(fidx, lemmaIdx) , lemma.serialize())
+                
+            # or it is in the fact
+            # then we know this lemma is a bad one
+            # so let's repair it
 
-                opextract = OpExtractor() # work on itp 
-                opextract.walk(lemma)
-                lemma_var_set = opextract.Symbols
-                post_ex_var_set = _get_var(post_ex)
+            # IMPROVEMENT: variable set change below
 
-                inv_var_set = lemma_var_set.union(post_ex_var_set)
-                sorted_inv_var_set = sorted(list(inv_var_set), key = lambda x: x.symbol_name())
-                blocked_cexs = self.cexs_blocked.get(fidx+1,[]) # fidx+1 is fewer cex
-                facts = self.unblockable_fact[fidx+1]             # facts should be more facts
-                facts_on_inv_vars = _get_cubes_with_more_var(facts, inv_var_set)
-                cexs_on_inv_vars, blocked_c_idxs = self.shrink_var_cexs(cexs = blocked_cexs, \
-                    fidx = fidx, varset = inv_var_set, \
-                    remove_vars = remove_vars, keep_vars = keep_vars) 
-                #cexs_on_inv_vars = _get_cubes_with_fewer_var(blocked_cexs, inv_var_set)
-                sorted_allvars = sorted(self.system.variables, key = lambda x: x.symbol_name())
-                sorted_prime_vars = sorted(self.system.prime_variables, key = lambda x: x.symbol_name())
+            opextract = OpExtractor() # work on itp 
+            opextract.walk(lemma)
+            lemma_var_set = opextract.Symbols
+            post_ex_var_set = _get_var(post_ex)
 
-                self.dump_frames()
-                print ('  [push_lemma F%d] Invoke SyGuS Now:'%(fidx))
-                print ('----------------\nvarset:\n',inv_var_set)
-                print ('----------------\ncex:\n',   cexs_on_inv_vars)
-                print ('----------------\nfacts:\n', facts_on_inv_vars)
-                if (len(cexs_on_inv_vars) == 0 or len(facts_on_inv_vars) == 0):
-                    print ('  [push_lemma F%d] WARNING: no cex! skip sygus'%(fidx))
-                    input ()
-                    break
+            inv_var_set = lemma_var_set.union(post_ex_var_set)
+            sorted_inv_var_set = sorted(list(inv_var_set), key = lambda x: x.symbol_name())
+            blocked_cexs = self.cexs_blocked.get(fidx+1,[]) # fidx+1 is fewer cex
+            facts = self.unblockable_fact[fidx+1]             # facts should be more facts
+            facts_on_inv_vars = _get_cubes_with_more_var(facts, inv_var_set)
+            cexs_on_inv_vars, blocked_c_idxs = self.shrink_var_cexs(cexs = blocked_cexs, \
+                fidx = fidx + 1, varset = inv_var_set, \
+                remove_vars = remove_vars, keep_vars = keep_vars) 
+            #cexs_on_inv_vars = _get_cubes_with_fewer_var(blocked_cexs, inv_var_set)
+            sorted_allvars = sorted(self.system.variables, key = lambda x: x.symbol_name())
+            sorted_prime_vars = sorted(self.system.prime_variables, key = lambda x: x.symbol_name())
 
-
-
-                cex_guided_pbe = CexGuidedPBE( \
-                    primal_vars = self.system.variables,
-                    prime_vars  = self.system.prime_variables,
-                    primal_map  = self.primal_map, # next_v --> v
-                    prime_map   = self.prime_map, # v --> next_v
-                    T =  self.system.trans,
-                    F_idx_minus2 =  self.frames[fidx],
-                    Init = self.system.init, # IMPROVEMENT: Use init
-                    inv_var_set = inv_var_set, # we can change this if necessary
-                    facts_on_inv_vars = facts_on_inv_vars,
-                    cexs_on_inv_vars = cexs_on_inv_vars,
-                    sorted_inv_var_set = sorted_inv_var_set,
-                    sorted_allvars = sorted_allvars,
-                    sorted_prime_vars = sorted_prime_vars,
-                    op_obj = opextract \
-                    )
-
-                # lemma /\ F /\ T => lemma'
-                itp = cex_guided_pbe.syn_lemma_F_T_implies_lemma_prime(fidx = fidx, lidx = lemmaIdx, itp = lemma, \
-                    frame_dump = self.dump_frames(toStr = True))
-
-                if itp is None:
-                    print ('  [push_lemma F%d] Repair lemma l%d failed: ' % (fidx, lemmaIdx))
-                    break # syn failed
-
-                # assert (lemma /\ F /\ T => lemma')
-                itp_prime_var = itp.substitute(cex_guided_pbe.prime_map)
-                md = self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) )
-                #if md is not None:
-                #    print (md)
-                assert (self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) ) is None )
-                # if not (F[fidx-1]) => itp
-                #   add to all previous frames
-                self._add_lemma(lemma = itp, fidx = fidx+1, cidxs = blocked_c_idxs)
-
-                # deal with cex_covered_by_newly_pushed_lemmas
-                blocked_cex_in_prev_frame = set()
-                for cIdx in blocked_c_idxs:
-                    blocked_cex_in_prev_frame.add( self.cex_origin.get(fidx, dict()).get(cIdx, None) )
-                self.cex_covered_by_pushed_lemmas[fidx] = self.cex_covered_by_pushed_lemmas.get(fidx,set()).union(\
-                    blocked_cex_in_prev_frame)
-
-                if (self.solve(Not(Implies(And(self.frames[fidx-1]), itp))) is not None):
-                    print ('  [push_lemma F%d] New to add to all prev frame '%(fidx) )
-                    self.frames[fidx][lemmaIdx] = And(lemma, itp)
-                    self._add_lemma_to_all_prev_frame(end_frame_id = fidx-1, lemma = itp)
+            self.dump_frames()
+            print ('  [push_lemma F%d] Invoke SyGuS Now:'%(fidx))
+            print ('----------------\nvarset:\n',inv_var_set)
+            print ('----------------\ncex:\n',   cexs_on_inv_vars)
+            print ('----------------\nfacts:\n', facts_on_inv_vars)
+            if (len(cexs_on_inv_vars) == 0 or len(facts_on_inv_vars) == 0):
+                print ('  [push_lemma F%d] WARNING: no cex! skip sygus'%(fidx))
+                input ()
                 break
+
+
+
+            cex_guided_pbe = CexGuidedPBE( \
+                primal_vars = self.system.variables,
+                prime_vars  = self.system.prime_variables,
+                primal_map  = self.primal_map, # next_v --> v
+                prime_map   = self.prime_map, # v --> next_v
+                T =  self.system.trans,
+                F_idx_minus2 =  self.frames[fidx],
+                Init = self.system.init, # IMPROVEMENT: Use init
+                inv_var_set = inv_var_set, # we can change this if necessary
+                facts_on_inv_vars = facts_on_inv_vars,
+                cexs_on_inv_vars = cexs_on_inv_vars,
+                sorted_inv_var_set = sorted_inv_var_set,
+                sorted_allvars = sorted_allvars,
+                sorted_prime_vars = sorted_prime_vars,
+                op_obj = opextract \
+                )
+
+            # lemma /\ F /\ T => lemma'
+            itp = cex_guided_pbe.syn_lemma_F_T_implies_lemma_prime(fidx = fidx, lidx = lemmaIdx, itp = lemma, \
+                frame_dump = self.dump_frames(toStr = True))
+
+            if itp is None:
+                print ('  [push_lemma F%d] Repair lemma l%d failed: ' % (fidx, lemmaIdx))
+                break # syn failed
+
+            # assert (lemma /\ F /\ T => lemma')
+            itp_prime_var = itp.substitute(cex_guided_pbe.prime_map)
+            md = self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) )
+            #if md is not None:
+            #    print (md)
+            assert (self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) ) is None )
+            # if not (F[fidx-1]) => itp
+            #   add to all previous frames
+            self._add_lemma(lemma = itp, fidx = fidx+1, cidxs = blocked_c_idxs)
+
+            # deal with cex_covered_by_newly_pushed_lemmas
+            blocked_cex_in_prev_frame = set()
+            for cIdx in blocked_c_idxs:
+                blocked_cex_in_prev_frame.add( self.cex_origin.get(fidx, dict()).get(cIdx, None) )
+
+            self.lemma_to_cex_map_perframe[fidx][lemmaIdx] = self.lemma_to_cex_map_perframe[fidx].get(lemmaIdx, set()).union(\
+                blocked_cex_in_prev_frame)
+            self.cex_covered_by_pushed_lemmas[fidx] = self.cex_covered_by_pushed_lemmas.get(fidx,set()).union(\
+                blocked_cex_in_prev_frame)
+
+            if (self.solve(Not(Implies(And(self.frames[fidx-1]), itp))) is not None):
+                print ('  [push_lemma F%d] New to add to all prev frame '%(fidx) )
+                self.frames[fidx][lemmaIdx] = And(lemma, itp) # we don't want to touch the lemma Idx will mess things up
+                self._add_lemma_to_all_prev_frame(end_frame_id = fidx-1, lemma = itp)
+            break
 
 
 
@@ -764,7 +812,6 @@ class PDR(object):
         prop = Not(And([EqualsOrIff(v,val) for v,val in cube]))
         if self.solve(self.frames[idx] + [Not( prop )] ) is None:
             print ('      [block] already blocked by F%d' % idx)
-            pause ()
             return True
 
         heapq.heappush(priorityQueue, (idx, cube))
@@ -787,7 +834,6 @@ class PDR(object):
                 if (self.solve( \
                         [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]) is not None):
                     print ('      [block] CEX is reachable -- direct init!')
-                    input ()
                     return False
             
             model, itp = self.solveTrans(self.frames[fidx-1] + ([prop] if Config_rm_cex_in_prev else []), \
@@ -821,7 +867,7 @@ class PDR(object):
 
 
 def test_naive_pdr():
-    width = 4
+    width = 16
     cnt = BaseAddrCnt(width)
     prop = cnt.neq_property(1 << (width-1),1,1)
     pdr = PDR(cnt)
@@ -829,20 +875,23 @@ def test_naive_pdr():
     pdr.sanity_check_imply()
     pdr.sanity_check_frame_monotone()
     pdr.sanity_check_inductive_inv(prop)
-    print ('inv: ', simplify(pdr.get_inv()))
+    pdr.dump_frames()
+    print ('inv: ', simplify(pdr.get_inv()).serialize())
 
 
 
 def test_naive_pdr_2cnt():
-    width = 4
+    width = 16
     cnt = TwoCnt(width, True)
-    prop = cnt.neq_property(8,8)
+    #prop_good = cnt.false_property(65536-1001,1000)
+    prop = cnt.neq_property(65536-1000,1000)
     pdr = PDR(cnt)
     pdr.check_property(prop)
     pdr.sanity_check_imply()
     pdr.sanity_check_frame_monotone()
     pdr.sanity_check_inductive_inv(prop)
-    print ('inv: ', simplify(pdr.get_inv()))
+    pdr.dump_frames()
+    print ('inv: ', simplify(pdr.get_inv()).serialize())
 
 
 if __name__ == '__main__':
