@@ -32,9 +32,9 @@ Config_simplify_itp = True
 Config_rm_cex_in_prev = True
 Config_push_facts = True
 #----------- Heuristics -------------------
-Config_enhance_giveup_threshold = (3,2) # (10,8)
-Config_cex_invalid_itp_guess_threshold = (5,4) # (20, 18)
-Config_try_drop_cex_ = (5,5) # (30, 50)  # after 30 frames, per 50
+Config_enhance_giveup_threshold = (2, 3) # (8,10)
+Config_cex_invalid_itp_guess_threshold = (4,5) # (18, 20)
+Config_try_drop_cex = (5,5) # (30, 50)  # after 30 frames, per 50
 
 
 
@@ -184,17 +184,17 @@ class PDR(object):
                 _printStr ('    all tried to push')
 
             if fidx in self.cexs_blocked:
-                _printStr ('  CEX blocked # : %d'% len(self.cexs_blocked[fidx]) )
+                _printStr ('  CEX blocked # : %d'% len(self.cexs_blocked[fidx]) , '|  CEX covered : ', str(self.cex_covered_by_pushed_lemmas.get(fidx,set())))
                 for cidx, cex in enumerate(self.cexs_blocked[fidx]):
                     ptr = '*' if self.cexs_pushed_idxs_map.get(fidx,0) == cidx else ' '  # push pointer position
-                    cvr = 'C' if cidx in self.cex_covered_by_pushed_lemmas.get(fidx,set()) else ' ' # covered by pushed lemmas
+                    cvr = '+' if cidx in self.cex_covered_by_pushed_lemmas.get(fidx,set()) else ' ' # covered by pushed lemmas
                     pushed_status_list = self.cex_pushed_status.get(fidx, [])
                     pushed_status = pushed_status_list[cidx] if cidx < len(pushed_status_list) else 'Unknown'
                     origin = self.cex_origin.get(fidx, dict()).get(cidx, 'Unknown')
                     hashkey = self._canonicalize_cex(cex)
                     itp_push_status = self.cex_to_itp_push_fail.get(hashkey,(0,0))
                     itp_repr_status = self.cex_to_itp_enhance_fail.get(hashkey,(0,0))
-                    _printStr ('  %s c%d ' % (ptr, cidx), '|', \
+                    _printStr ('  %s%s c%d ' % (ptr,cvr, cidx), '|', \
                         str(itp_push_status), str(itp_repr_status), '|:', \
                         self.print_cube(cex), '| PS:', str(pushed_status), '| O:', str(origin))
                 if self.cexs_pushed_idxs_map.get(fidx,0) == cidx + 1:
@@ -528,26 +528,6 @@ class PDR(object):
                 print ('  [push_lemma F%d] skip l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' no cex value of it is known, skip')
                 continue
             assert len(cexIdxs) != 0 , "we should not push this kind of lemma"
-
-            # update statistics of cex--lemma
-            if len(cexIdxs) == 1:
-                skip_this_lemma = False
-                for cidx in cexIdxs:
-                    hashkey = self._canonicalize_cex( self.cexs_blocked[fidx][cidx] )
-                    n_fail, n_total = self.cex_to_itp_push_fail.get(hashkey, (0,0))
-                    self.cex_to_itp_push_fail[hashkey] = (n_fail+1, n_total+1)
-                    if n_fail+1 > Config_cex_invalid_itp_guess_threshold[0] and n_total +1 > Config_cex_invalid_itp_guess_threshold[1]:
-                        skip_this_lemma = True
-                        break
-                    n_fail, n_total = self.cex_to_itp_enhance_fail.get(hashkey, (0,0))
-                    if n_fail > Config_enhance_giveup_threshold[0] and n_total > Config_enhance_giveup_threshold[1]:
-                        skip_this_lemma = True
-                        break
-
-                if skip_this_lemma:
-                    print ('  [push_lemma F%d] skip l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' too many failed itp/repair, skip')
-                    continue
-
             
             status_list=self.cex_pushed_status.get(fidx,[])
             allSubsumed = True
@@ -565,6 +545,27 @@ class PDR(object):
                 print ('  [push_lemma F%d] skip l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' as it has been covered by other successful pushes')
                 input ()
                 continue
+
+            # update statistics of cex--lemma relation
+            # after all previous update
+            if len(cexIdxs) == 1:
+                skip_this_lemma = False
+                for cidx in cexIdxs:
+                    hashkey = self._canonicalize_cex( self.cexs_blocked[fidx][cidx] )
+                    n_fail, n_total = self.cex_to_itp_push_fail.get(hashkey, (0,0))
+                    if n_fail+1 > Config_cex_invalid_itp_guess_threshold[0] * (n_total +1)/Config_cex_invalid_itp_guess_threshold[1] and n_total +1 > Config_cex_invalid_itp_guess_threshold[1]:
+                        skip_this_lemma = True
+                        break
+                    self.cex_to_itp_push_fail[hashkey] = (n_fail+1, n_total+1) # once reach the limit we will not update it
+
+                    n_fail, n_total = self.cex_to_itp_enhance_fail.get(hashkey, (0,0))
+                    if n_fail > Config_enhance_giveup_threshold[0]*n_total/Config_enhance_giveup_threshold[1] and n_total > Config_enhance_giveup_threshold[1]:
+                        skip_this_lemma = True
+                        break
+
+                if skip_this_lemma:
+                    print ('  [push_lemma F%d] skip l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' too many failed itp/repair, skip')
+                    continue
 
             print ('  [push_lemma F%d] start repair l%d :'%(fidx, lemmaIdx) , lemma.serialize())
                 
@@ -599,7 +600,7 @@ class PDR(object):
             if (len(cexs_on_inv_vars) == 0 or len(facts_on_inv_vars) == 0):
                 print ('  [push_lemma F%d] WARNING: no cex! skip sygus'%(fidx))
                 input ()
-                break
+                continue
 
 
 
@@ -631,7 +632,7 @@ class PDR(object):
                         hashkey = self._canonicalize_cex( self.cexs_blocked[fidx][cidx] )
                         n_fail, n_total = self.cex_to_itp_enhance_fail.get(hashkey, (0,0))
                         self.cex_to_itp_enhance_fail[hashkey] = (n_fail+1, n_total+1)
-                break # syn failed
+                continue # syn failed: try next
 
             # assert (lemma /\ F /\ T => lemma')
             itp_prime_var = itp.substitute(cex_guided_pbe.prime_map)
@@ -657,7 +658,7 @@ class PDR(object):
                 print ('  [push_lemma F%d] New to add to all prev frame '%(fidx) )
                 self.frames[fidx][lemmaIdx] = And(lemma, itp) # we don't want to touch the lemma Idx will mess things up
                 self._add_lemma_to_all_prev_frame(end_frame_id = fidx-1, lemma = itp)
-            break
+            # end of the for loop for repairing lemmas
 
         self.frames_pushed_idxs_map[fidx] =  end_lemma_idx
         # if len(self.frames[fidx]) > end_lemma_idx : we have unpushed lemmas

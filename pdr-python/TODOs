@@ -8,3 +8,9 @@
 - use init in sygus ?
 
 - fast solve using btor if model is not necessary
+
+- over-approximation :
+    drop cex that are too difficult (we may add them later if they are truly needed)
+    
+- synthesize new lemmas:
+    don't use those that are difficult
