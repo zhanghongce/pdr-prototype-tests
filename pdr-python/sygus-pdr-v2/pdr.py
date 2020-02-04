@@ -22,6 +22,7 @@ def next_var(v):
     """Returns the 'next' of the given variable"""
     return Symbol("%s_prime" % v.symbol_name(), v.symbol_type())
 
+#----------- Basic Parameters -------------------
 Config_Max_Frame = 10000000
 Config_use_itp_in_pushing = False
 Config_analyze_use_itp_in_pushing = True
@@ -30,6 +31,12 @@ Config_partial_model = True
 Config_simplify_itp = True
 Config_rm_cex_in_prev = True
 Config_push_facts = True
+#----------- Heuristics -------------------
+Config_enhance_giveup_threshold = (3,2) # (10,8)
+Config_cex_invalid_itp_guess_threshold = (5,4) # (20, 18)
+Config_try_drop_cex_ = (5,5) # (30, 50)  # after 30 frames, per 50
+
+
 
 def pause():
     if Config_debug:
@@ -153,6 +160,11 @@ class PDR(object):
         self.cex_origin = {} # <n , <cex number, where it is from: None, reverse map>>
         self.cex_covered_by_pushed_lemmas =  {} # <n , set of (cex id) >
 
+        # statistics
+        self.cex_to_itp_enhance_fail = {}
+        self.cex_to_itp_push_fail = {}
+        #canonicalize_cex
+
     def dump_frames(self, toStr = False):
         retS = []
         def _printStr(*argl, **argd):
@@ -174,11 +186,17 @@ class PDR(object):
             if fidx in self.cexs_blocked:
                 _printStr ('  CEX blocked # : %d'% len(self.cexs_blocked[fidx]) )
                 for cidx, cex in enumerate(self.cexs_blocked[fidx]):
-                    ptr = '*' if self.cexs_pushed_idxs_map.get(fidx,0) == cidx else ' '
+                    ptr = '*' if self.cexs_pushed_idxs_map.get(fidx,0) == cidx else ' '  # push pointer position
+                    cvr = 'C' if cidx in self.cex_covered_by_pushed_lemmas.get(fidx,set()) else ' ' # covered by pushed lemmas
                     pushed_status_list = self.cex_pushed_status.get(fidx, [])
                     pushed_status = pushed_status_list[cidx] if cidx < len(pushed_status_list) else 'Unknown'
                     origin = self.cex_origin.get(fidx, dict()).get(cidx, 'Unknown')
-                    _printStr ('  %s c%d: ' % (ptr, cidx), self.print_cube(cex), '| PS:', str(pushed_status), '| O:', str(origin))
+                    hashkey = self._canonicalize_cex(cex)
+                    itp_push_status = self.cex_to_itp_push_fail.get(hashkey,(0,0))
+                    itp_repr_status = self.cex_to_itp_enhance_fail.get(hashkey,(0,0))
+                    _printStr ('  %s c%d ' % (ptr, cidx), '|', \
+                        str(itp_push_status), str(itp_repr_status), '|:', \
+                        self.print_cube(cex), '| PS:', str(pushed_status), '| O:', str(origin))
                 if self.cexs_pushed_idxs_map.get(fidx,0) == cidx + 1:
                     _printStr ('    all tried to push')
             if fidx in self.unblockable_fact:
@@ -187,6 +205,11 @@ class PDR(object):
                     _printStr ('    f%d: ' % cidx, self.print_cube(fact) )
         _printStr ('---------- END Frames DUMP ----------')
         return '\n'.join(retS)
+
+    def _canonicalize_cex(self, cex):
+        """cex to a hashable thing"""
+        cex_str = [(v.symbol_name(), val) for v, val in cex ]
+        return tuple(sorted(cex_str, key = lambda x: x[0]))
 
     def _add_cex(self, cex, fidx, origin = None):
         if fidx not in self.cexs_blocked:
@@ -453,14 +476,6 @@ class PDR(object):
                         blocked_cexIdx_in_current_frame = self.lemma_to_cex_map_perframe.get(fidx, dict()).get(lemmaIdx, set())
                         blocked_cexIdx_in_next_frame = set()
                         for cidx in blocked_cexIdx_in_current_frame:
-
-                            if cidx >= len( self.cex_pushed_status.get(fidx,[]) ):
-                                self.dump_frames()
-                                print ('!!!!!!!!!!!!!!!!!!!')
-                                print (lemmaIdx, lemma.serialize())
-                                print (blocked_cexIdx_in_current_frame)
-                                print (self.cex_pushed_status.get(fidx,[]))
-
                             nxt_idx = self.cex_pushed_status.get(fidx,[])[cidx]
                             assert (nxt_idx is not None) 
                             if nxt_idx == '*subsume*':
@@ -470,6 +485,13 @@ class PDR(object):
 
                         # deal with lemma cex-idx map in the next frame (should be in the add_lemma part?)
                         self._add_lemma(lemma = lemma, fidx = fidx + 1, cidxs = blocked_cexIdx_in_next_frame)
+
+                        # update statistics of cex--lemma
+                        if len(blocked_cexIdx_in_current_frame) == 1:
+                            for cidx in blocked_cexIdx_in_current_frame:
+                                hashkey = self._canonicalize_cex( self.cexs_blocked[fidx][cidx] )
+                                n_fail, n_total = self.cex_to_itp_push_fail.get(hashkey, (0,0))
+                                self.cex_to_itp_push_fail[hashkey] = (n_fail, n_total+1)
 
                     # deal with cex_covered_by_pushed_lemmas
                     if fidx not in self.cex_covered_by_pushed_lemmas:
@@ -506,6 +528,26 @@ class PDR(object):
                 print ('  [push_lemma F%d] skip l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' no cex value of it is known, skip')
                 continue
             assert len(cexIdxs) != 0 , "we should not push this kind of lemma"
+
+            # update statistics of cex--lemma
+            if len(cexIdxs) == 1:
+                skip_this_lemma = False
+                for cidx in cexIdxs:
+                    hashkey = self._canonicalize_cex( self.cexs_blocked[fidx][cidx] )
+                    n_fail, n_total = self.cex_to_itp_push_fail.get(hashkey, (0,0))
+                    self.cex_to_itp_push_fail[hashkey] = (n_fail+1, n_total+1)
+                    if n_fail+1 > Config_cex_invalid_itp_guess_threshold[0] and n_total +1 > Config_cex_invalid_itp_guess_threshold[1]:
+                        skip_this_lemma = True
+                        break
+                    n_fail, n_total = self.cex_to_itp_enhance_fail.get(hashkey, (0,0))
+                    if n_fail > Config_enhance_giveup_threshold[0] and n_total > Config_enhance_giveup_threshold[1]:
+                        skip_this_lemma = True
+                        break
+
+                if skip_this_lemma:
+                    print ('  [push_lemma F%d] skip l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' too many failed itp/repair, skip')
+                    continue
+
             
             status_list=self.cex_pushed_status.get(fidx,[])
             allSubsumed = True
@@ -584,6 +626,11 @@ class PDR(object):
 
             if itp is None:
                 print ('  [push_lemma F%d] Repair lemma l%d failed: ' % (fidx, lemmaIdx))
+                if len(cexIdxs) == 1:
+                    for cidx in cexIdxs:
+                        hashkey = self._canonicalize_cex( self.cexs_blocked[fidx][cidx] )
+                        n_fail, n_total = self.cex_to_itp_enhance_fail.get(hashkey, (0,0))
+                        self.cex_to_itp_enhance_fail[hashkey] = (n_fail+1, n_total+1)
                 break # syn failed
 
             # assert (lemma /\ F /\ T => lemma')
@@ -612,48 +659,11 @@ class PDR(object):
                 self._add_lemma_to_all_prev_frame(end_frame_id = fidx-1, lemma = itp)
             break
 
-
-
-
-            # get an itp and try to push it
-            # if  there is new fact, redo this
-            # if there is not, fail
-            # IMPROVEMENT: an alternative, try add future's state
-
         self.frames_pushed_idxs_map[fidx] =  end_lemma_idx
         # if len(self.frames[fidx]) > end_lemma_idx : we have unpushed lemmas
         # how hard to try?
         print ('  [push_lemma F%d] push lemma finished, press any key to continue'%fidx)
         pause()
-
-        # try new lemmas ? 
-
-                    # Question:  lemma (for each lemma control the sygus upper bound, expr size, trial no)
-
-                    # get the variable of ex
-                    # get the operators of lemma
-                    # get the unblockable fact of these variables
-                    #    and all other with more variables, 
-                    # get the cexs of these variables or fewer
-                    # sygus  --- what if there are conflicts???
-                    # get back and put to 
-
-                    # but if you try with F[fidx - 1] /\ T --> INV[fidx]
-                    # not INV(blocked[fidx]), but you don't know if it is blocked/unblocked
-                    # INV(fact[fidx]), and then you don't need to try to push, because you already pushed
-                    # but in this way you are actually pushing the cex/facts
-                    
-
-                    # synthesize a stronger one to push?
-                    # variables?
-                    # F[fidx - 2] /\ T --> INV[fidx - 1 ]
-                    # not INV (blocked)
-                    # INV(fact) /\ INV(fact[fidx])
-                    # put in self.frames?
-                    # try push this INV?
-                    # threshold in construction ? grammar may be not enough?
-
-
 
 
 
@@ -867,7 +877,7 @@ class PDR(object):
 
 
 def test_naive_pdr():
-    width = 16
+    width = 4
     cnt = BaseAddrCnt(width)
     prop = cnt.neq_property(1 << (width-1),1,1)
     pdr = PDR(cnt)
