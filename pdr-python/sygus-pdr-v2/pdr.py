@@ -31,6 +31,7 @@ Config_partial_model = True
 Config_simplify_itp = True
 Config_rm_cex_in_prev = True
 Config_push_facts = True
+Config_push_facts_sanity_check = False
 #----------- Heuristics -------------------
 Config_enhance_giveup_threshold = (2, 3) # (8,10)
 Config_cex_invalid_itp_guess_threshold = (4,5) # (18, 20)
@@ -423,7 +424,8 @@ class PDR(object):
                 for factIdx in range(start_fact_idx, end_fact_idx):
                     fact = self.unblockable_fact[fidx][factIdx]
                     # once a fact always a fact
-                    assert (not self.recursive_block(fact, fidx+1, remove_vars, keep_vars, cex_origin = None))
+                    if Config_push_facts_sanity_check:
+                        assert (not self.recursive_block(fact, fidx+1, remove_vars, keep_vars, cex_origin = None))
                     if fact not in self.unblockable_fact.get(fidx+1,[]):
                         self._add_fact(fact = fact, fidx = fidx + 1)
 
