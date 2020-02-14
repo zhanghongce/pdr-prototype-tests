@@ -7,20 +7,10 @@ from pysmt.logics import QF_BV
 from utilfunc import _get_var, _get_cubes_with_more_var, _get_cubes_with_fewer_var
 from cegpbe import CexGuidedPBE
 from opextract import OpExtractor
+from sts import TransitionSystem
 
 import heapq
 
-class TransitionSystem(object):
-    """Trivial representation of a Transition System."""
-    def __init__(self, variables, prime_variables, init, trans):
-        self.variables = variables
-        self.prime_variables = prime_variables
-        self.init = init
-        self.trans = trans # T -> 
-
-def next_var(v):
-    """Returns the 'next' of the given variable"""
-    return Symbol("%s_prime" % v.symbol_name(), v.symbol_type())
 
 #----------- Basic Parameters -------------------
 Config_Max_Frame = 10000000
@@ -38,6 +28,9 @@ Config_cex_invalid_itp_guess_threshold = (4,5) # (18, 20)
 Config_try_drop_cex = (5,5) # (30, 50)  # after 30 frames, per 50
 
 
+def next_var(v):
+    """Returns the 'next' of the given variable"""
+    return Symbol("%s_prime" % v.symbol_name(), v.symbol_type())
 
 def pause():
     if Config_debug:
@@ -64,13 +57,13 @@ class BaseAddrCnt(TransitionSystem):
 
 
         variables = [base, addr, cnt, inp, lden]
-        prime_variables = [next_var(v) for v in variables]
+        prime_variables = [TransitionSystem.get_prime(v) for v in variables]
         init = base.Equals(0) & addr.Equals(0) & cnt.Equals(0)
-        trans= next_var(base).Equals( \
+        trans= TransitionSystem.get_prime(base).Equals( \
             Ite(lden.Equals(1), inp, base  )) & \
-            next_var(addr).Equals( \
+            TransitionSystem.get_prime(addr).Equals( \
             Ite(lden.Equals(1), inp, BVAdd(addr, BV(1, nbits) ) )) & \
-            next_var(cnt).Equals( \
+            TransitionSystem.get_prime(cnt).Equals( \
             Ite(lden.Equals(1), BV(0, nbits), BVAdd(cnt, BV(1, nbits) ) ))
             
         TransitionSystem.__init__(self, \
@@ -99,14 +92,14 @@ class TwoCnt(TransitionSystem):
         self.lden = Symbol('lden',  BVType(1))
 
         variables = [self.c1, self.c2, self.inp, self.lden]
-        prime_variables = [next_var(v) for v in variables]
+        prime_variables = [TransitionSystem.get_prime(v) for v in variables]
         if zero_init:
             init = self.c1.Equals(0) & self.c2.Equals(self.mask)
         else:
             init = self.c1.Equals(self.inp) & self.c2.Equals(BVNot(self.inp))
-        trans= next_var(self.c1).Equals( \
+        trans= TransitionSystem.get_prime(self.c1).Equals( \
             Ite(self.lden.Equals(1), self.inp, BVAdd(self.c1, BV(1, nbits)  ))) & \
-            next_var(self.c2).Equals( \
+            TransitionSystem.get_prime(self.c2).Equals( \
             Ite(self.lden.Equals(1), BVNot(self.inp), BVSub(self.c2, BV(1, nbits)  )))
             
         TransitionSystem.__init__(self, \
@@ -143,8 +136,8 @@ class PDR(object):
           self.solver = Solver()
 
         self.itp_solver = Interpolator(logic=QF_BV)
-        self.prime_map = dict([(v, next_var(v)) for v in self.system.variables])
-        self.primal_map = dict([(next_var(v), v) for v in self.system.variables])
+        self.prime_map = dict([(v, TransitionSystem.get_prime(v)) for v in self.system.variables])
+        self.primal_map = dict([(TransitionSystem.get_prime(v), v) for v in self.system.variables])
         self.cexs_blocked = {}  # <n, cex> : n -> list of cex, maybe blocked already
         self.unblockable_fact = {} # <n, ex> : n -> list of ex, unblocked, used to syn
 
