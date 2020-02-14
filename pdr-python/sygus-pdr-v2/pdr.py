@@ -296,7 +296,7 @@ class PDR(object):
             # cube is list of (var, assignments)
             if cube is not None:
                 # Blocking phase of a bad state
-                if not self.recursive_block(cube, len(self.frames)-1, remove_vars, keep_vars ):
+                if not self.recursive_block(cube, len(self.frames)-1, remove_vars, keep_vars, cex_origin = 'prop' ):
                     print("[Checking property] Bug found at step %d" % (len(self.frames)))
                     return False
                 else:
@@ -332,7 +332,7 @@ class PDR(object):
         prevF = self.frames[fidx]
         print ('      [pre_post_p_trans] Property:', prop.serialize())
         print ('      [pre_post_p_trans] var will => prime')
-        print ('      [pre_post_p_trans] prevF:', prevF)
+        #print ('      [pre_post_p_trans] prevF:', prevF)
 
         pre_ex = []
         post_ex = []
@@ -418,7 +418,7 @@ class PDR(object):
                     fact = self.unblockable_fact[fidx][factIdx]
                     # once a fact always a fact
                     if Config_push_facts_sanity_check:
-                        assert (not self.recursive_block(fact, fidx+1, remove_vars, keep_vars, cex_origin = None))
+                        assert (not self.recursive_block(fact, fidx+1, remove_vars, keep_vars, cex_origin = 'push_facts'))
                     if fact not in self.unblockable_fact.get(fidx+1,[]):
                         self._add_fact(fact = fact, fidx = fidx + 1)
 
@@ -500,7 +500,7 @@ class PDR(object):
                 # prev_ex is not None
                 # try recursive block
                 if prev_ex not in self.unblockable_fact.get(fidx,[]):
-                    if self.recursive_block(prev_ex, fidx, remove_vars, keep_vars, cex_origin = None ):
+                    if self.recursive_block(prev_ex, fidx, remove_vars, keep_vars, cex_origin = 'push_lemma' ):
                         print ('  [push_lemma F%d] cex blocked:'%(fidx))
                         continue # try in next round
                     # else recursive block failed
@@ -577,9 +577,17 @@ class PDR(object):
 
             inv_var_set = lemma_var_set.union(post_ex_var_set)
             sorted_inv_var_set = sorted(list(inv_var_set), key = lambda x: x.symbol_name())
+            # IMPROVEMENT: this is not right!!!
             blocked_cexs = self.cexs_blocked.get(fidx+1,[]) # fidx+1 is fewer cex
             facts = self.unblockable_fact[fidx+1]             # facts should be more facts
             facts_on_inv_vars = _get_cubes_with_more_var(facts, inv_var_set)
+
+            # IMPROVEMENT: you may not want to use all cex, 
+            # 1. probably just the unblocked ones
+            # 2. probably just the one it blocks
+            # 3. probably rule out those that are hard to block...
+            # 4. probably you can try many different times with different ...
+            # 5. but facts must be taken into consideration any way!!!
             cexs_on_inv_vars, blocked_c_idxs = self.shrink_var_cexs(cexs = blocked_cexs, \
                 fidx = fidx + 1, varset = inv_var_set, \
                 remove_vars = remove_vars, keep_vars = keep_vars) 
@@ -629,11 +637,12 @@ class PDR(object):
                         self.cex_to_itp_enhance_fail[hashkey] = (n_fail+1, n_total+1)
                 continue # syn failed: try next
 
-            # assert (lemma /\ F /\ T => lemma')
             itp_prime_var = itp.substitute(cex_guided_pbe.prime_map)
             md = self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) )
             #if md is not None:
             #    print (md)
+
+            # assert (lemma /\ F /\ T => lemma')
             assert (self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) ) is None )
             # if not (F[fidx-1]) => itp
             #   add to all previous frames
@@ -642,12 +651,15 @@ class PDR(object):
             # deal with cex_covered_by_newly_pushed_lemmas
             blocked_cex_in_prev_frame = set()
             for cIdx in blocked_c_idxs:
-                blocked_cex_in_prev_frame.add( self.cex_origin.get(fidx, dict()).get(cIdx, None) )
+                prev_cex_idx = self.cex_origin.get(fidx, dict()).get(cIdx, None)
+                # if it has an origin
+                if isinstance(prev_cex_idx,int):
+                    blocked_cex_in_prev_frame.add( prev_cex_idx )
 
             self.lemma_to_cex_map_perframe[fidx][lemmaIdx] = self.lemma_to_cex_map_perframe[fidx].get(lemmaIdx, set()).union(\
-                blocked_cex_in_prev_frame)
+                blocked_cex_in_prev_frame) # update the current lemma as it blocks a lot more now than it was
             self.cex_covered_by_pushed_lemmas[fidx] = self.cex_covered_by_pushed_lemmas.get(fidx,set()).union(\
-                blocked_cex_in_prev_frame)
+                blocked_cex_in_prev_frame) # and now we have some more covered
 
             if (self.solve(Not(Implies(And(self.frames[fidx-1]), itp))) is not None):
                 print ('  [push_lemma F%d] New to add to all prev frame '%(fidx) )
@@ -848,8 +860,15 @@ class PDR(object):
                 remove_vars = remove_vars, keep_vars = keep_vars, findItp = True )
 
             if model is None:
+                if isinstance(cex_origin, int):
+                  cex_origin_idx = cex_origin if idx == fidx else None
+                elif isinstance(cex_origin, str):
+                  cex_origin_idx = cex_origin
+                else:
+                  assert (cex_origin is None)
+                  cex_origin_idx = cex_origin
 
-                cidx = self._add_cex(fidx = fidx, cex = cex, origin = cex_origin if idx == fidx else None)
+                cidx = self._add_cex(fidx = fidx, cex = cex, origin = cex_origin_idx)
 
                 self._add_lemma(lemma = itp, fidx = fidx, cidxs = {cidx} )
                 if self.solve( Not(Implies(And(self.frames[fidx-1]), itp) )) is not None:
@@ -873,7 +892,7 @@ class PDR(object):
 
 
 def test_naive_pdr():
-    width = 4
+    width = 16
     cnt = BaseAddrCnt(width)
     prop = cnt.neq_property(1 << (width-1),1,1)
     pdr = PDR(cnt)

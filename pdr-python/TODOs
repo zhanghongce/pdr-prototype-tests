@@ -5,7 +5,7 @@
 - array: blackbox ?
 - variable set : too constrained? trial and error ?
 
-- use init in sygus ?
+- use init in sygus ? Yes. You must.
 
 - fast solve using btor if model is not necessary
 
@@ -14,3 +14,9 @@
     
 - synthesize new lemmas:
     don't use those that are difficult
+    need to take init => ITP into consideration !
+
+- push lemma 
+   do not do that hard to non property lemma?
+
+- lemma status tracking

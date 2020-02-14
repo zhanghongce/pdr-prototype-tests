@@ -171,7 +171,7 @@ class CexGuidedPBE:
           summary_fn = 'sygus_queries/q' + now.strftime("%Y-%m-%d-%H-%M-%S") + '-summary.txt'
           with open(summary_fn, 'w') as fout:
             fout.write('Fidx: ' + str(fidx) + ' to fidx+1\n')
-            fout.write('Lidx: ' + str(fidx) + '\n')
+            fout.write('Lidx: ' + str(lidx) + '\n')
             fout.write('Itp: ' + itp.serialize() if itp else 'None' + '\n')
             fout.write('\n--------------------------\n')
             fout.write(str(frame_dump))
@@ -187,7 +187,7 @@ class CexGuidedPBE:
           summary_fn = 'sygus_queries/q' + now.strftime("%Y-%m-%d-%H-%M-%S") + '-summary.txt'
           with open(summary_fn, 'w') as fout:
             fout.write('Fidx: ' + str(fidx) + '\n')
-            fout.write('Lidx: ' + str(fidx) + '\n')
+            fout.write('Lidx: ' + str(lidx) + '\n')
             fout.write('Itp: ' + itp.serialize() if itp else 'None' + '\n')
             fout.write('--------------------------\n')
             fout.write(str(frame_dump))
