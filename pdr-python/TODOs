@@ -1,7 +1,7 @@
 - use btor when possible
-- when not needed, don't enunemrate model in solve
+- when not needed, don't enunemrate model in solve (and use btor)
 
-- assumptions : add to all frame ?
+- assumptions : add to all frame ? (or add to transition?)
 - array: blackbox ?
 - variable set : too constrained? trial and error ?
 
@@ -14,9 +14,12 @@
     
 - synthesize new lemmas:
     don't use those that are difficult
-    need to take init => ITP into consideration !
+    or just use that it should block (so we rely on the conjunction to do the work)
+    need to take init => ITP into consideration in SyGuS!
 
 - push lemma 
    do not do that hard to non property lemma?
 
 - lemma status tracking
+
+- test other designs (SP, vdp)
