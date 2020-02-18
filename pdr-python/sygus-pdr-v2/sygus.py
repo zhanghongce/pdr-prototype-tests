@@ -7,6 +7,7 @@ from utilfunc import _get_var, _get_cubes_with_fewer_var, _get_cubes_with_more_v
 
 Config_expand_values = False
 Config_use_trans = False
+Config_use_init = True
 # Config_use_Fminus2_imply = Config_use_trans
 Config_use_facts = True
 Config_smtlib2_daggify = False # maybe make it to True ?
@@ -115,7 +116,7 @@ sygus_template = """
       {evcs}
    ))
 
-
+{Init}
 {Fminus2}
 {Tr}
 
@@ -124,6 +125,7 @@ sygus_template = """
 {blocks}
 {facts}
 {imply}
+{init_imply_stx}
 
 (check-synth)
 
@@ -187,7 +189,7 @@ class SyGusQueryGen:
     
     def __init__(self, \
       primal_vars, prime_vars, \
-      T, F_idx_minus2,\
+      T, F_idx_minus2, Init, \
       inv_var_set, facts_on_inv_vars, cexs_on_inv_vars,\
       sorted_inv_var_set, sorted_allvars, sorted_prime_vars, \
       op_obj, cache_mode = False):
@@ -216,6 +218,8 @@ class SyGusQueryGen:
         if Config_use_trans:
           self.F_prev = F_idx_minus2
           self.T = T
+        if Config_use_init:
+          self.Init = Init
         
         # fix the above, you need to extract first -- fixed
         if not cache_mode:
@@ -313,6 +317,9 @@ class SyGusQueryGen:
         f_minus_2_stx = self._gen_f_minus_2() if Config_use_trans else ''
         # '(define-fun Tr '
         tr_stx = self._gen_tr() if Config_use_trans else ''
+        # '(define-fun Init '
+        init_stx = self._gen_init() if Config_use_init else ''
+
         # ['(declare-var V'
         # ['(declare-var P'
         vp_def_stx = self._gen_def_states()
@@ -322,14 +329,17 @@ class SyGusQueryGen:
         # below is not necessary
         # monotone_stx = self._gen_Fminus2_imply_constraint() if Config_use_Fminus2_imply else ''
         # currently nothing
+        init_imply_stx = self._gen_Init_imply_constraint() if Config_use_init else ''
+
         predefs = '\n'.join([d for _, d in self.functs.items()])
         # the var list
         args = _to_args( self.ordered_vars )
 
         sygus_query = sygus_template.format(predefs = predefs, args = args, \
             comps = comps, evcs = evcs, Fminus2 = f_minus_2_stx,\
-            Tr = tr_stx, vdefs = vp_def_stx, blocks = blocks_stx, \
-            facts = facts_stx, imply = imply_stx, nonterminals = nt_stx)
+            Init = init_stx, Tr = tr_stx, vdefs = vp_def_stx, blocks = blocks_stx, \
+            facts = facts_stx, imply = imply_stx, init_imply_stx = init_imply_stx,
+            nonterminals = nt_stx)
 
         with open(sygus_fn, 'w') as fout:
             fout.write(sygus_query)
@@ -348,6 +358,13 @@ class SyGusQueryGen:
         arginvp = ' '.join([v.symbol_name()+'P' for v in self.ordered_vars])
         return template.format(argV = argv, argP = argp, argInvV = arginvv, argInvP = arginvp)
 
+    def _gen_Init_imply_constraint(self): #
+        template = '(constraint (=> (Init {argV}) (INV {argInvV})))'
+        argv = ' '.join([v.symbol_name()+'V' for v in self.allvars])
+        arginvv = ' '.join([v.symbol_name()+'V' for v in self.ordered_vars])
+        return template.format(argV = argv, argInvV = arginvv)
+
+
     def _gen_Fminus2_imply_constraint(self): #
         template = '(constraint (=> (Fminus2 {argP}) (INV {argInvP})))'
         argv = ' '.join([v.symbol_name()+'V' for v in self.allvars])
@@ -357,6 +374,9 @@ class SyGusQueryGen:
 
     def _gen_f_minus_2(self): # -> f_minus_2_stx
         return '(define-fun Fminus2 ' + _to_args(self.allvars) + ' Bool ' +  _gen_smt2(And(self.F_prev)) + ')'
+
+    def _gen_init(self): # -> init_stx
+        return '(define-fun Init ' + _to_args(self.allvars) + ' Bool ' +  _gen_smt2(self.Init) + ')'
         
     def _gen_tr(self): # -> tr_stx
         return '(define-fun Tr ' + _to_tr_args(self.allvars, self.prime_vars) + \

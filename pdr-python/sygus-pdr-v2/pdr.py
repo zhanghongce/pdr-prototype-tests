@@ -123,6 +123,48 @@ class TwoCnt(TransitionSystem):
 
         return Not( self.c1.Equals(c1) & self.c2.Equals(c2) )
 
+
+class TwoCntNoload(TransitionSystem):
+    def __init__(self, nbits, zero_init = False):
+        self.nbits = nbits # save the number of bits
+        self.mask = 2**(nbits)-1
+
+        self.c1   = Symbol('c1', BVType(nbits))
+        self.c2   = Symbol('c2', BVType(nbits))
+        self.inp  = Symbol('inp',  BVType(nbits))
+
+        variables = [self.c1, self.c2, self.inp]
+        prime_variables = [TransitionSystem.get_prime(v) for v in variables]
+        if zero_init:
+            init = self.c1.Equals(0) & self.c2.Equals(self.mask)
+        else:
+            init = self.c1.Equals(self.inp) & self.c2.Equals(BVNot(self.inp))
+        trans= TransitionSystem.get_prime(self.c1).Equals( \
+            BVAdd(self.c1, BV(1, nbits)  )) & \
+            TransitionSystem.get_prime(self.c2).Equals( \
+            BVSub(self.c2, BV(1, nbits)  ))
+            
+        TransitionSystem.__init__(self, \
+          variables = variables, \
+          prime_variables = prime_variables, \
+          init = init, trans = trans )
+
+    def neq_property(self, c1, c2):
+        c1 = c1 & self.mask
+        c2 = c2 & self.mask
+
+        assert ( c1 + c2 != self.mask)
+
+        return Not( self.c1.Equals(c1) & self.c2.Equals(c2) )
+
+    def false_property(self, c1, c2):
+        c1 = c1 & self.mask
+        c2 = c2 & self.mask
+
+        assert ( c1 + c2 == self.mask)
+
+        return Not( self.c1.Equals(c1) & self.c2.Equals(c2) )
+
 # keep_vars and remove_vars are primal var list/set
 
 class PDR(object):
@@ -265,7 +307,8 @@ class PDR(object):
             print("[Checking init] CEX: ", self.print_cube(init_cex))
             return True
         print ("[Checking init]  F0 and T and not P'")
-        init_cex = self.get_bad_state_from_property_invalid_after_trans(prop, 0, remove_vars, keep_vars )
+        init_cex = self.get_bad_state_from_property_invalid_after_trans(
+            prop = prop, idx = 0, use_init = True, remove_vars = remove_vars, keep_vars = keep_vars)
         if init_cex is not None:
             print("[Checking init] Property failed at F1")
             print("[Checking init] CEX @F0: ", self.print_cube(init_cex))
@@ -290,7 +333,8 @@ class PDR(object):
             pause ()
 
             # frame[-1] /\ T -> not (prop)
-            cube = self.get_bad_state_from_property_invalid_after_trans(prop, len(self.frames)-1, remove_vars, keep_vars)
+            cube = self.get_bad_state_from_property_invalid_after_trans( \
+                prop = prop, idx = len(self.frames)-1, use_init = False, remove_vars = remove_vars, keep_vars = keep_vars)
 
             print ('[Checking property] Get cube: ', cube , ' @F%d' % (len(self.frames)-1))
             # cube is list of (var, assignments)
@@ -638,10 +682,12 @@ class PDR(object):
                 continue # syn failed: try next
 
             itp_prime_var = itp.substitute(cex_guided_pbe.prime_map)
-            md = self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) )
+            #md = self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) )
             #if md is not None:
             #    print (md)
 
+            # assert (init -> lemma)
+            assert (self.solve(Not(Implies(self.system.init, itp))) is None)
             # assert (lemma /\ F /\ T => lemma')
             assert (self.solve(Not(Implies(And(self.frames[fidx] + [self.system.trans, itp]), itp_prime_var ) ) ) is None )
             # if not (F[fidx-1]) => itp
@@ -661,10 +707,10 @@ class PDR(object):
             self.cex_covered_by_pushed_lemmas[fidx] = self.cex_covered_by_pushed_lemmas.get(fidx,set()).union(\
                 blocked_cex_in_prev_frame) # and now we have some more covered
 
-            if (self.solve(Not(Implies(And(self.frames[fidx-1]), itp))) is not None):
-                print ('  [push_lemma F%d] New to add to all prev frame '%(fidx) )
-                self.frames[fidx][lemmaIdx] = And(lemma, itp) # we don't want to touch the lemma Idx will mess things up
-                self._add_lemma_to_all_prev_frame(end_frame_id = fidx-1, lemma = itp)
+            #if (self.solve(Not(Implies(And(self.frames[fidx-1]), itp))) is not None):
+            print ('  [push_lemma F%d] Add to all prev frame '%(fidx) )
+            self.frames[fidx][lemmaIdx] = And(lemma, itp) # we don't want to touch the lemma Idx will mess things up
+            self._add_lemma_to_all_prev_frame(end_frame_id = fidx-1, lemma = itp)
             # end of the for loop for repairing lemmas
 
         self.frames_pushed_idxs_map[fidx] =  end_lemma_idx
@@ -683,13 +729,14 @@ class PDR(object):
         return False
 
     # used in push_lemma, check_property, check_init_failed
-    def get_bad_state_from_property_invalid_after_trans(self, prop, idx, remove_vars = [], keep_vars = None):
+    def get_bad_state_from_property_invalid_after_trans(self, prop, idx, use_init, remove_vars = [], keep_vars = None):
         """Extracts a reachable state that intersects the negation
         of the property and the last current frame"""
         assert (idx >= 0)
         print ('    [F%d -> prop]' % idx)
         md, itp = self.solveTrans(self.frames[idx], \
             T = self.system.trans, prop = prop, \
+            init = self.system.init if use_init else None,
             variables = self.system.variables, \
             remove_vars = remove_vars, keep_vars = keep_vars, findItp = True )
 
@@ -737,13 +784,20 @@ class PDR(object):
 
     # you may want to have the interpolant here
     # used in recursive_block  and  get_bad_state_from_property_invalid_after_trans
-    def solveTrans(self, prevF, T, prop , variables, remove_vars = [], keep_vars = None, findItp = False):
+    def solveTrans(self, prevF, T, prop , variables, init, remove_vars = [], keep_vars = None, findItp = False):
         # prevF /\ T(p, prime) --> not prop, if sat
         print ('      [solveTrans] Property:', prop.serialize())
         print ('      [solveTrans] var will => prime')
-        print ('      [solveTrans] prevF:', prevF)
+        #print ('      [solveTrans] prevF:', prevF)
+        print ('      [solveTrans] use Init:', init is not None)
 
-        if self.solver.solve( prevF + [T, Not( prop.substitute(self.prime_map))] ):
+        if init is None:
+            f = prevF + [T, Not( prop.substitute(self.prime_map))]
+        else:
+            f = [Or(And(prevF+[T]), init.substitute(self.prime_map) ) , Not( prop.substitute(self.prime_map))]
+        #print (f)
+
+        if self.solver.solve(f):
             model = self.solver.get_model()
             retL = []
             for v, val in model:
@@ -759,7 +813,13 @@ class PDR(object):
             return retL, None
         Itp = None
         if findItp:
-            Itp = self.itp_solver.binary_interpolant( a = And(prevF + [T]), b= Not( prop.substitute(self.prime_map)) )
+            if init is None:
+                a = And(prevF + [T])
+                b = Not( prop.substitute(self.prime_map))
+            else:
+                a = f[0]
+                b = f[1]
+            Itp = self.itp_solver.binary_interpolant( a = a, b = b)
             Itp = And(Itp)
             Itp = Itp.substitute(self.primal_map)
             if Config_simplify_itp:
@@ -848,15 +908,16 @@ class PDR(object):
             # Question: too old itp? useful or not?
             # push on older frames also? for new ITP?
             print ('      [block] check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
-            if Config_rm_cex_in_prev:
-                if (self.solve( \
-                        [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]) is not None):
-                    print ('      [block] CEX is reachable -- direct init!')
-                    return False
+            #if Config_rm_cex_in_prev:
+            #    if (self.solve( \
+            #            [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]) is not None):
+            #        print ('      [block] CEX is reachable -- direct init!')
+            #        return False
             
             model, itp = self.solveTrans(self.frames[fidx-1] + ([prop] if Config_rm_cex_in_prev else []), \
                 T = self.system.trans, prop = prop, \
                 variables = self.system.variables, \
+                init = self.system.init, \
                 remove_vars = remove_vars, keep_vars = keep_vars, findItp = True )
 
             if model is None:
@@ -907,7 +968,21 @@ def test_naive_pdr():
 
 def test_naive_pdr_2cnt():
     width = 16
-    cnt = TwoCnt(width, True)
+    cnt = TwoCnt(width, zero_init = True)
+    #prop_good = cnt.false_property(65536-1001,1000)
+    prop = cnt.neq_property(65536-1000,1000)
+    pdr = PDR(cnt)
+    pdr.check_property(prop)
+    pdr.sanity_check_imply()
+    pdr.sanity_check_frame_monotone()
+    pdr.sanity_check_inductive_inv(prop)
+    pdr.dump_frames()
+    print ('inv: ', simplify(pdr.get_inv()).serialize())
+
+
+def test_naive_pdr_2cnt_noload():
+    width = 16
+    cnt = TwoCntNoload(width, zero_init = True)
     #prop_good = cnt.false_property(65536-1001,1000)
     prop = cnt.neq_property(65536-1000,1000)
     pdr = PDR(cnt)

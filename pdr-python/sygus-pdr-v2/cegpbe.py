@@ -120,9 +120,10 @@ class CexGuidedPBE:
     def syn_one_instance(self, new_facts, timeout = None):  # add init config
         print (self.facts_on_inv_vars + new_facts)
         sygus_if2.Config_use_trans = True
+        sygus_if2.Config_use_init = True
         sygus_query = sygus_if2.SyGusQueryGen ( 
           primal_vars = self.primal_vars, prime_vars = self.prime_vars, \
-          T = self.T, F_idx_minus2 = self.F_idx_minus2, \
+          T = self.T, F_idx_minus2 = self.F_idx_minus2, Init = self.Init,\
           inv_var_set = self.inv_var_set, facts_on_inv_vars = self.facts_on_inv_vars + new_facts, \
           cexs_on_inv_vars = self.cexs_on_inv_vars,\
           sorted_inv_var_set = self.sorted_inv_var_set, sorted_allvars = self.sorted_allvars, sorted_prime_vars = self.sorted_prime_vars, \
