@@ -74,6 +74,23 @@ class Lemma(object):
     # think about contracting
     # think about itp change form
 
+class FrameCache(object):
+    def __init__(self):
+        self.frames = {} # idx -> list of lemmas
+    def _add_lemma(self, lemma, fidx):
+        # TODO:
+        pass
+    def _add_pushed_lemma(self, lemma, start, end):
+        # TODO:
+        pass
+    def frame_prop_list(self, fidx):
+        assert fidx in self.frames
+        return [l.expr for l in self.frames[fidx]]
+    def copy(self):
+        # TODO: 
+        pass
+    # insert a frame to this one ???
+    
 
 
 #----------- MAIN CLASS -------------------
@@ -152,6 +169,9 @@ class PDR(object):
         if self.is_valid(Implies(self.frame_prop(fidx), prop)):
             return True
         return False
+    def frame_not_implies_model(self, fidx, prop):
+        return self.get_not_valid_model(Implies(self.frame_prop(fidx), prop))
+
     def frame_compatible_w(self, fidx, prop):
         if self.is_sat(And(self.frame_prop_list(fidx) + [prop])):
             return True
@@ -216,6 +236,15 @@ class PDR(object):
         return '\n'.join(retS)
     # *** END OF dump_frames ***
 
+    #----------- FRAME HANDLing  -------------------
+
+    def _add_lemma(self, lemma, fidx):
+        # TODO
+        pass
+
+    def _add_pushed_lemma(self, lemma, start, end):
+        # TODO
+        pass
     
     #----------- TRANS - related  -------------------
 
@@ -297,9 +326,7 @@ class PDR(object):
     # *** END OF get_bad_state_from_property_invalid_after_trans ***
 
     def do_recursive_block(self, cube, idx, cex_origin, remove_vars = [], keep_vars = None ):
-        assert isinstance(cex_origin, tuple )
-        cex_push_origin = cex_origin[0]
-        cex_create_origin = cex_origin[1]
+        assert isinstance(cex_origin, str )
 
         priorityQueue = []
         print ('      [block] Try @F%d' % idx, self.print_cube(cube) )
@@ -320,7 +347,7 @@ class PDR(object):
                 print ('      [block] CEX found!')
                 return False
 
-            prop = Not(And([EqualsOrIff(v,val) for v,val in cex]))
+            prop = _cube2prop(cex) #Not(And([EqualsOrIff(v,val) for v,val in cex]))
             
             # Question: too old itp? useful or not?
             # push on older frames also? for new ITP?
@@ -331,35 +358,157 @@ class PDR(object):
             #        print ('      [block] CEX is reachable -- direct init!')
             #        return False
             
-            model, itp = self.solveTrans(self.frames[fidx-1] + ([prop] if Config_rm_cex_in_prev else []), \
+            model, _, itp = self.solveTrans(self.frame_prop_list(fidx-1) + ([prop] if Config_rm_cex_in_prev else []), \
                 T = self.system.trans, prop = prop, \
                 variables = self.system.variables, \
                 init = self.system.init, \
-                remove_vars = remove_vars, keep_vars = keep_vars, findItp = True )
+                remove_vars = remove_vars, keep_vars = keep_vars, findItp = True, get_post_state=False )
 
             if model is None:
-                if cex_push_origin is not None:
-                  new_cex_push_origin = cex_push_origin if idx == fidx else None
-                else:
-                  new_cex_push_origin = None
-
-                cidx = self._add_cex(fidx = fidx, cex = cex, origin = (new_cex_push_origin, cex_create_origin))
-
-                self._add_lemma(lemma = itp, fidx = fidx, cidxs = {cidx} )
-                if not self.is_valid( Implies(And(self.frames[fidx-1]), itp) ):
-                    self._add_lemma_to_all_prev_frame( end_frame_id = fidx-1, lemma = itp )
-                    print ('    [block] add ITP to F1 ->>- F%d: ' % (fidx-1), itp.serialize())
-                    # add cex to all previous ones and this will block it 
-                    # or, maybe you don't need it because it is already pushed before the current frame
-                    # and should not interfere with the not yet pushed lemma.
-
+                lemma = Lemma(expr=itp, cex=cex, origin=cex_origin)
+                self._add_lemma(lemma = lemma, fidx = fidx)
+                self._add_pushed_lemma(lemma = lemma, start = 1, end = fidx -1 )
                 heapq.heappop(priorityQueue) # pop this cex
-
             else:
                 # model is not None
                 print ('      [block] push to queue, F%d' % (fidx-1), self.print_cube(model))
                 heapq.heappush(priorityQueue, (fidx-1, model))
-        # TODO: 
         print ('      [block] Succeed, return.')
         return True
     # *** END OF do_recursive_block ***
+
+    def try_recursive_block(self, cube, idx, cex_origin, frame_cache: FrameCache,  remove_vars = [], keep_vars = None ):
+        assert isinstance(cex_origin, str )
+
+        priorityQueue = []
+        print ('      [block] Try @F%d' % idx, self.print_cube(cube) )
+
+        prop = _cube2prop(cube)
+
+        if self.is_valid(Implies(And(self.frame_prop_list(idx) + frame_cache.frame_prop_list(idx)), prop)):
+            print ('      [block] already blocked by F%d' % idx)
+            return True
+
+        heapq.heappush(priorityQueue, (idx, cube))
+        while len(priorityQueue) > 0:
+            fidx, cex = heapq.nsmallest(1, priorityQueue)[0]
+
+            if fidx == 0:
+                model_init_frame = self.solve( \
+                    [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex])
+                assert (model_init_frame is not None)
+                print ('      [block] CEX found!')
+                return False
+
+            prop = _cube2prop(cex) #Not(And([EqualsOrIff(v,val) for v,val in cex]))
+            
+            # Question: too old itp? useful or not?
+            # push on older frames also? for new ITP?
+            print ('      [block] check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
+            #if Config_rm_cex_in_prev:
+            #    if (self.solve( \
+            #            [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]) is not None):
+            #        print ('      [block] CEX is reachable -- direct init!')
+            #        return False
+            
+            model, _, itp = self.solveTrans(
+                self.frame_prop_list(fidx-1) \
+                     + frame_cache.frame_prop_list(fidx-1) \
+                     + ([prop] if Config_rm_cex_in_prev else []), \
+                T = self.system.trans, prop = prop, \
+                variables = self.system.variables, \
+                init = self.system.init, \
+                remove_vars = remove_vars, keep_vars = keep_vars, findItp = True, get_post_state=False )
+
+            if model is None:
+                lemma = Lemma(expr=itp, cex=cex, origin=cex_origin)
+                frame_cache._add_lemma(lemma = lemma, fidx = fidx)
+                frame_cache._add_pushed_lemma(lemma = lemma, start = 1, end = fidx -1 )
+                heapq.heappop(priorityQueue) # pop this cex
+            else:
+                # model is not None
+                print ('      [block] push to queue, F%d' % (fidx-1), self.print_cube(model))
+                heapq.heappush(priorityQueue, (fidx-1, model))
+        print ('      [block] Succeed, return.')
+        return True
+    # *** END OF try_recursive_block ***
+
+    #----------- PROCEDURES -------------------
+
+    def check_init_failed(self, prop, remove_vars, keep_vars):
+        init_cex = self.frame_not_implies_model(fidx=0,prop=prop)
+        print ("[Checking init] F0 and not P")
+        if init_cex is not None:
+            print("[Checking init] Property failed at INIT")
+            print("[Checking init] CEX: ", self.print_cube(init_cex))
+            return True
+        print ("[Checking init]  F0 and T and not P'")
+        init_cex = self.get_bad_state_from_property_invalid_after_trans(
+            prop = prop, idx = 0, use_init = True, remove_vars = remove_vars, keep_vars = keep_vars)
+        if init_cex is not None:
+            print("[Checking init] Property failed at F1")
+            print("[Checking init] CEX @F0: ", self.print_cube(init_cex))
+            return True
+        print ("[Checking init] Done")
+        return False
+    # *** END OF check_init_failed ***
+
+    def check_property(self, prop, remove_vars = [], keep_vars = None):
+        """Property Directed Reachability approach without optimizations."""
+        print("[Checking property] Property: %s." % prop)
+
+        if self.check_init_failed(prop, remove_vars, keep_vars):
+            return False
+
+        # self._add_lemma(fidx = 1, lemma = prop) : no need
+        # its interpolant may be too small
+
+        while True:
+            self.sanity_check_frame_monotone()
+            self.sanity_check_imply()
+            self.dump_frames()
+            print ('Total Frames: %d, L %d ' %( len(self.frames) , len(self.frames[-1])))
+            pause ()
+
+            # frame[-1] /\ T -> not (prop)
+            cube = self.get_bad_state_from_property_invalid_after_trans( \
+                prop = prop, idx = len(self.frames)-1, use_init = False, remove_vars = remove_vars, keep_vars = keep_vars)
+
+            print ('[Checking property] Get cube: ', cube , ' @F%d' % (len(self.frames)-1))
+            # cube is list of (var, assignments)
+            if cube is not None:
+                # Blocking phase of a bad state
+                if not self.do_recursive_block(cube, len(self.frames)-1, cex_origin = 'prop', remove_vars = remove_vars, keep_vars=keep_vars ):
+                    print("[Checking property] Bug found at step %d" % (len(self.frames)))
+                    return False
+                else:
+                    print("[Checking property] Cube blocked '%s'" % self.print_cube(cube))
+            else:
+                # Checking if the last two frames are equivalent i.e., are inductive
+                if self.is_last_two_frames_inductive():
+                    print("[Checking property] The system is safe, frame : %d" % len(self.frames) )
+                    return True
+                else:
+                    print("[Checking property] Adding frame %d..." % (len(self.frames)))
+                    self.frames.append([])
+                    self.push_lemma_from_the_lowest_frame(remove_vars, keep_vars)
+                    if self.is_last_two_frames_inductive():
+                        print("[Checking property] The system is safe, frame : %d" % len(self.frames) )
+                        return True
+    # *** END OF check_property ***
+
+    # put too few in the      
+    def push_lemma_from_the_lowest_frame(self, remove_vars, keep_vars):
+        start_frame = 1 # let's try not to worry about caching this at this time
+        # do not push from the initial frame
+        print ('[pushes] F%d --- F%d' % (start_frame, len(self.frames)-2))
+        for fidx in range(start_frame, len(self.frames)-1):
+            self.push_lemma_from_frame(fidx, remove_vars, keep_vars)
+    # *** END OF push_lemma_from_the_lowest_frame ***
+
+    #----------- !!! PUSH LEMMA !!! -------------------
+
+    def push_lemma_from_frame(self, fidx, remove_vars, keep_vars):
+        #TODO:
+        pass
+    # *** END OF push_lemma_from_frame ***
