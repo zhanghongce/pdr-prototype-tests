@@ -118,9 +118,11 @@ class CexGuidedPBE:
     # synthesize F-2 /\ T ==> INV
 
     def syn_one_instance(self, new_facts, timeout = None):  # add init config
-        print (self.facts_on_inv_vars + new_facts)
+        
         sygus_if2.Config_use_trans = True
         sygus_if2.Config_use_init = True
+        sygus_if2.Config_use_facts = len(self.facts_on_inv_vars + new_facts ) != 0
+        
         sygus_query = sygus_if2.SyGusQueryGen ( 
           primal_vars = self.primal_vars, prime_vars = self.prime_vars, \
           T = self.T, F_idx_minus2 = self.F_idx_minus2, Init = self.Init,\
