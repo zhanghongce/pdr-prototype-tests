@@ -64,7 +64,7 @@ class Lemma(object):
         # statistics
         self.itp_push_failed = (0,0)
         self.itp_enhance_fail = (0,0)
-    def push(self): # -> Lemma:
+    def direct_push(self): # -> Lemma:
         self.pushed = True
         ret = Lemma(expr = self.expr, cex = self.cex, origin = self.origin)
         ret.itp_push_failed = (self.itp_push_failed[0] , self.itp_push_failed[0]+1)
@@ -73,6 +73,9 @@ class Lemma(object):
     # think about repairing
     # think about contracting
     # think about itp change form
+    def serialize(self):
+        return self.expr.serialize()
+# *** END OF Lemma ***
 
 class FrameCache(object):
     def __init__(self):
@@ -90,6 +93,7 @@ class FrameCache(object):
         # TODO: 
         pass
     # insert a frame to this one ???
+# *** END OF FrameCache ***
     
 
 
@@ -246,6 +250,10 @@ class PDR(object):
         # TODO
         pass
     
+    def _add_fact(self,fact, fidx):
+        #TODO:
+        pass
+    
     #----------- TRANS - related  -------------------
 
     # you may want to have the interpolant here
@@ -365,7 +373,7 @@ class PDR(object):
                 remove_vars = remove_vars, keep_vars = keep_vars, findItp = True, get_post_state=False )
 
             if model is None:
-                lemma = Lemma(expr=itp, cex=cex, origin=cex_origin)
+                lemma = Lemma(expr=itp, cex={cex}, origin=cex_origin)
                 self._add_lemma(lemma = lemma, fidx = fidx)
                 self._add_pushed_lemma(lemma = lemma, start = 1, end = fidx -1 )
                 heapq.heappop(priorityQueue) # pop this cex
@@ -421,7 +429,7 @@ class PDR(object):
                 remove_vars = remove_vars, keep_vars = keep_vars, findItp = True, get_post_state=False )
 
             if model is None:
-                lemma = Lemma(expr=itp, cex=cex, origin=cex_origin)
+                lemma = Lemma(expr=itp, cex={cex}, origin=cex_origin)
                 frame_cache._add_lemma(lemma = lemma, fidx = fidx)
                 frame_cache._add_pushed_lemma(lemma = lemma, start = 1, end = fidx -1 )
                 heapq.heappop(priorityQueue) # pop this cex
@@ -509,6 +517,108 @@ class PDR(object):
     #----------- !!! PUSH LEMMA !!! -------------------
 
     def push_lemma_from_frame(self, fidx, remove_vars, keep_vars):
-        #TODO:
-        pass
+        assert (len(self.frames) > fidx+1)
+        assert (len(self.frames[fidx]) > 0 )
+
+        # 1. push facts
+        start_fact_idx = self.facts_pushed_idxs_map.get(fidx, 0)
+        end_fact_idx = len(self.unblockable_fact[fidx])
+        if fidx in self.unblockable_fact:
+            for factIdx in range(start_fact_idx, end_fact_idx):
+                fact = self.unblockable_fact[fidx][factIdx]
+                # once a fact always a fact
+                if fact not in self.unblockable_fact.get(fidx+1,[]):
+                    self._add_fact(fact = fact, fidx = fidx + 1)
+        self.facts_pushed_idxs_map[fidx] = end_fact_idx
+                
+        ## push lemmas
+        start_lemma_idx = self.frames_pushed_idxs_map.get(fidx, 0)
+        end_lemma_idx   = len(self.frames[fidx])
+
+        unpushed_lemmas = [] # list of (lidx, lemma, prev_ex, post_ex )
+
+        # 1. try direct push
+        for lemmaIdx in range(start_lemma_idx, end_lemma_idx):
+            lemma : Lemma = self.frames[fidx][lemmaIdx]
+            if lemma.pushed:
+                continue
+            print ('  [push_lemma F%d] Try pushing lemma l%d to F%d: ' % (fidx, lemmaIdx, fidx+1) , (lemma.serialize()))
+
+            prev_ex, post_ex, _ = \
+                self.solveTrans(prevF=self.frame_prop_list(fidx), 
+                T=self.system.trans,prop=lemma,variables=self.system.variables, 
+                init=None,remove_vars=remove_vars, keep_vars=keep_vars, 
+                findItp=False,get_post_state=True)
+            # variables there is to distinguish vars and prime vars
+
+            if prev_ex is None: # post_ex should be none also
+                # push is successful
+                assert (post_ex is None)
+                print ('  [push_lemma F%d] Succeed in pushing l%d!'%(fidx, lemmaIdx))
+                self._add_lemma(lemma.direct_push(), fidx = fidx+1) # together with its cex
+            else: # there is a failing model
+                # store if temporarily and we will decide how to deal with them
+                unpushed_lemmas.append((lemmaIdx, lemma, prev_ex, post_ex))
+        # finish pushing all that can be pushed  
+        # start to deal with unpushed
+
+        # 2. handled unpushed lemmas
+        for lemmaIdx, lemma, prev_ex, post_ex in unpushed_lemmas:
+            if len(lemma.cex) == 0:
+                print ('  [push_lemma F%d] will give up on lemma as it blocks None, '%(fidx), 'l'+str(lemmaIdx)+':',  lemma.serialize())
+                continue
+            # 2.1 if subsume, then we don't need to worry about
+            if lemma.subsume_by_next_frame():
+                continue
+            # 2.2 try itp repair
+            itp_fc = FrameCache() # self as an fc also, but the solver etc also
+            cex_failed , itp = lemma.try_itp_push(itp_fc) # itp is also in the framecache
+            # itp is a Lemma
+            if cex_failed:
+                assert (itp is None)
+                # not pushable 
+                print ('  [push_lemma F%d] skip r-block l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' as its cex cannot be pushed.')
+                continue
+
+            # 2.3 sygus repair
+            sygus_hint:Lemma = self._try_sygus_repair(lemma)
+            if sygus_hint is not None:
+                # succeed in repair
+                self._add_lemma(lemma = sygus_hint, fidx = fidx+1)
+                self._add_pushed_lemma(lemma = sygus_hint, start = 1, end = fidx)
+                print ('  [push_lemma F%d] repair l%d :'%(fidx, lemmaIdx) , lemma.serialize())
+                print ('  [push_lemma F%d] get l%d :'%(fidx, lemmaIdx) , sygus_hint.serialize())
+                continue
+
+            # 2.4 try contraction 
+            strengthen_fc = FrameCache() # self as an fc also, but the solver etc also
+            prop_succ, all_succ, time_out, unblockable_cube = lemma.try_strengthen(strengthen_fc, bound)
+            # full/prop itself/bad_state
+            if all_succ or prop_succ:
+                print ('  [push_lemma F%d] strengthened l%d :'%(fidx, lemmaIdx) , lemma.serialize(), " with extra lemma")
+                self.merge_frame_cache(strengthen_fc)
+                continue
+
+            if unblockable_cube is not None:
+                assert (not time_out)
+                self._add_fact(fact = unblockable_cube, fidx = fidx)
+
+            print ('  [push_lemma F%d] unable to push l%d :'%(fidx, lemmaIdx) , lemma.serialize())
+            print ('  [push_lemma F%d] use new itp l%d :'%(fidx, lemmaIdx), itp.serialize())
+                
+
+
+
+            
+
+                
+
+            # get its recursive blocked
+            # try itp push : given a framcecache?
+            # try recurisve push : given a framecache?
+            # try sygus push
+
+        # F. update pushed
+        self.frames_pushed_idxs_map[fidx] = end_lemma_idx
+
     # *** END OF push_lemma_from_frame ***
