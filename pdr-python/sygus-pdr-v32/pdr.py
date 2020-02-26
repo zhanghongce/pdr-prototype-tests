@@ -42,7 +42,9 @@ def debug(*l,**k):
 #----------- AUX FUNCTIONS -------------------
 def _cube2prop(cube):
   return Not(And([EqualsOrIff(v,val) for v,val in cube]))
-
+def print_cube(c):
+    return ( '(' + ( ' && '.join([v.symbol_name() + ' = ' + str(val) for v, val in c]) ) + ')'  ) 
+    
 
 
 #----------- AUX CLASSES -------------------
@@ -64,6 +66,9 @@ class Lemma(object):
         # statistics
         self.itp_push_fail = (0,0)
         self.itp_enhance_fail = (0,0)
+    def copy(self):
+        """return one that has no stat, no pushed"""
+        return Lemma(expr=self.expr, cex=self.cex, origin=self.origin)
     def stats_push_fail(self,failed : bool):
         self.itp_push_fail = (self.itp_push_fail[0]+(1 if failed else 0),self.itp_push_fail[1]+1)
     def stats_sygus_fail(self,failed : bool):
@@ -77,6 +82,7 @@ class Lemma(object):
         return ret
     def subsume_by_frame(self, fidx : int , pdr : 'PDR') -> bool:
         return pdr.is_valid(Implies(pdr.frame_prop(fidx) , _cube2prop(self.cex)))
+    # *** END OF subsume_by_frame ***
     def try_itp_push(self, fc : 'FrameCache', src_fidx:int, pdr:'PDR', remove_vars = [], keep_vars = None):
         blockable = pdr.try_recursive_block(cube = self.cex, idx = src_fidx+1, cex_origin = self.origin,
             frame_cache=fc, remove_vars=remove_vars,keep_vars=keep_vars )
@@ -86,6 +92,7 @@ class Lemma(object):
             fc.frames[src_fidx+1][0].itp_push_fail = self.itp_push_fail
             return (False, fc.frames[src_fidx+1][0])
         return (True, None)
+    # *** END OF try_itp_push ***
     def try_strengthen(self, fc: 'FrameCache', bnd:int, src_fidx:int, pdr:'PDR', prev_ex, remove_vars = [], keep_vars = None):
         # first try to strengthen itself
         # then try to strengthen the extra ones on fc
@@ -198,8 +205,20 @@ class Lemma(object):
         return ret
     # *** END OF _try_sygus_repair ***
 
-    def serialize(self):
+    def serialize(self) -> str:
         return self.expr.serialize()
+    def dump_expr(self) -> str:
+        return ( 
+            ('P' if self.pushed else ' ') + 
+            ('|' + self.expr.serialize()) +
+            ('|' + self.origin) +
+            ('|' + self.itp_push_fail +','+self.itp_enhance_fail) )
+    def dump_cex(self) -> str:
+        return ( 
+            ('P' if self.pushed else ' ') + 
+            ('| {' + ' , '.join ( [print_cube(c) for c in self.cex]) + '}') +
+            ('|' + self.origin) +
+            ('|' + self.itp_push_fail +','+self.itp_enhance_fail) )
     # think about repairing
     # think about contracting
     # think about itp change form
@@ -209,17 +228,21 @@ class FrameCache(object):
     def __init__(self):
         self.frames : Mapping[int, Sequence[Lemma] ] = {} # idx -> list of lemmas
     def _add_lemma(self, lemma, fidx):
-        # TODO:
-        pass
-    def _add_pushed_lemma(self, lemma, start, end):
-        # TODO:
-        pass
+        if fidx not in self.frames:
+            self.frames[fidx] = []
+        self.frames[fidx].append(lemma)
+    # *** END OF _add_lemma ***
+    def _add_pushed_lemma(self, lemma : Lemma, start, end):
+        l_prev = lemma.copy()
+        l_prev.pushed = True
+        for fidx in range(start,end+1):
+            self._add_lemma(lemma = l_prev, fidx = fidx)
+    # *** END OF _add_pushed_lemma ***
     def frame_prop_list(self, fidx):
         assert fidx in self.frames
         return [l.expr for l in self.frames[fidx]]
-    def copy(self):
-        # TODO: 
-        pass
+    # *** END OF frame_prop_list ***
+
     # insert a frame to this one ???
 # *** END OF FrameCache ***
     
@@ -352,9 +375,6 @@ class PDR(object):
                 assert (False)
 
     #----------- PRINTINGs -------------------
-    @staticmethod
-    def print_cube(c):
-        return ( '(' + ( ' && '.join([v.symbol_name() + ' = ' + str(val) for v, val in c]) ) + ')'  ) 
     def dump_frames(self, toStr = False):
         retS = []
         def _printStr(*argl, **argd):
@@ -363,7 +383,28 @@ class PDR(object):
             else:
                 print(*argl, **argd)
         _printStr ('---------- Frames DUMP ----------')
-        #  TODO: 
+        for fidx,f in enumerate(self.frames):
+            _printStr ('Frame : %d'%fidx)
+            for lidx, lemma in enumerate(f):
+                ptr = '*' if self.frames_pushed_idxs_map.get(fidx,0) == lidx else ' '
+                lemmaStr = lemma.dump_expr()
+                _printStr ('  %s l%d: ' % (ptr,lidx) , lemmaStr)
+            if self.frames_pushed_idxs_map.get(fidx,0) == lidx + 1:
+                _printStr ('    all tried to push')
+
+            _printStr ('  CEX blocked :')
+            for lidx, lemma in enumerate(f):
+                ptr = '*' if self.frames_pushed_idxs_map.get(fidx,0) == lidx else ' '
+                cexStr = lemma.dump_cex()
+                _printStr ('  %s c%d: ' % (ptr,lidx) , cexStr)
+            if self.frames_pushed_idxs_map.get(fidx,0) == lidx + 1:
+                _printStr ('    all tried to push')
+
+            if fidx in self.unblockable_fact:
+                _printStr ('  facts # : %d'% len(self.unblockable_fact[fidx]) )
+                for cidx, fact in enumerate(self.unblockable_fact[fidx]):
+                    _printStr ('    f%d: ' % cidx, print_cube(fact) )
+
         _printStr ('---------- END Frames DUMP ----------')
         return '\n'.join(retS)
     # *** END OF dump_frames ***
@@ -371,16 +412,22 @@ class PDR(object):
     #----------- FRAME HANDLing  -------------------
 
     def _add_lemma(self, lemma, fidx):
-        # TODO
-        pass
-
-    def _add_pushed_lemma(self, lemma, start, end):
-        # TODO
-        pass
-    
+        if fidx == len(self.frames):
+            self.frames[fidx].append([])
+        assert fidx < len(self.frames)
+        self.frames[fidx].append(lemma)
+    # *** END OF _add_lemma ***
+    def _add_pushed_lemma(self, lemma : Lemma, start, end):
+        l_prev = lemma.copy()
+        l_prev.pushed = True
+        for fidx in range(start,end+1):
+            self._add_lemma(lemma = l_prev, fidx = fidx)
+    # *** END OF _add_pushed_lemma ***   
     def _add_fact(self,fact, fidx):
-        #TODO:
-        pass
+        if fidx not in self.unblockable_fact:
+            self.unblockable_fact[fidx] = set()
+        assert fact not in self.unblockable_fact[fidx]
+        self.unblockable_fact[fidx].add(fact)
     
     #----------- TRANS - related  -------------------
 
@@ -465,7 +512,7 @@ class PDR(object):
         assert isinstance(cex_origin, str )
 
         priorityQueue = []
-        print ('      [block] Try @F%d' % idx, self.print_cube(cube) )
+        print ('      [block] Try @F%d' % idx, print_cube(cube) )
 
         prop = _cube2prop(cube)
         if self.frame_implies(idx, prop):
@@ -507,7 +554,7 @@ class PDR(object):
                 heapq.heappop(priorityQueue) # pop this cex
             else:
                 # model is not None
-                print ('      [block] push to queue, F%d' % (fidx-1), self.print_cube(model))
+                print ('      [block] push to queue, F%d' % (fidx-1), print_cube(model))
                 heapq.heappush(priorityQueue, (fidx-1, model))
         print ('      [block] Succeed, return.')
         return True
@@ -517,7 +564,7 @@ class PDR(object):
         assert isinstance(cex_origin, str )
 
         priorityQueue = []
-        print ('      [block] Try @F%d' % idx, self.print_cube(cube) )
+        print ('      [block] Try @F%d' % idx, print_cube(cube) )
 
         prop = _cube2prop(cube)
 
@@ -563,7 +610,7 @@ class PDR(object):
                 heapq.heappop(priorityQueue) # pop this cex
             else:
                 # model is not None
-                print ('      [block] push to queue, F%d' % (fidx-1), self.print_cube(model))
+                print ('      [block] push to queue, F%d' % (fidx-1), print_cube(model))
                 heapq.heappush(priorityQueue, (fidx-1, model))
         print ('      [block] Succeed, return.')
         return True
@@ -576,14 +623,14 @@ class PDR(object):
         print ("[Checking init] F0 and not P")
         if init_cex is not None:
             print("[Checking init] Property failed at INIT")
-            print("[Checking init] CEX: ", self.print_cube(init_cex))
+            print("[Checking init] CEX: ", print_cube(init_cex))
             return True
         print ("[Checking init]  F0 and T and not P'")
         init_cex = self.get_bad_state_from_property_invalid_after_trans(
             prop = prop, idx = 0, use_init = True, remove_vars = remove_vars, keep_vars = keep_vars)
         if init_cex is not None:
             print("[Checking init] Property failed at F1")
-            print("[Checking init] CEX @F0: ", self.print_cube(init_cex))
+            print("[Checking init] CEX @F0: ", print_cube(init_cex))
             return True
         print ("[Checking init] Done")
         return False
@@ -618,7 +665,7 @@ class PDR(object):
                     print("[Checking property] Bug found at step %d" % (len(self.frames)))
                     return False
                 else:
-                    print("[Checking property] Cube blocked '%s'" % self.print_cube(cube))
+                    print("[Checking property] Cube blocked '%s'" % print_cube(cube))
             else:
                 # Checking if the last two frames are equivalent i.e., are inductive
                 if self.is_last_two_frames_inductive():
@@ -749,5 +796,55 @@ class PDR(object):
 
         # F. update pushed
         self.frames_pushed_idxs_map[fidx] = end_lemma_idx
-
     # *** END OF push_lemma_from_frame ***
+    def merge_frame_cache(self, fc:FrameCache):
+        for fidx, lemmas in fc.frames.items():
+            for lemma in lemmas:
+                self._add_lemma(lemma = lemma, fidx = fidx)
+    # *** END OF merge_frame_cache ***
+
+
+
+def test_naive_pdr():
+    width = 16
+    cnt = BaseAddrCnt(width)
+    prop = cnt.neq_property(1 << (width-1),1,1)
+    pdr = PDR(cnt)
+    pdr.check_property(prop)
+    pdr.sanity_check_imply()
+    pdr.sanity_check_frame_monotone()
+    pdr.sanity_check_safe_inductive_inv(prop)
+    pdr.dump_frames()
+    print ('inv: ', simplify(pdr.get_inv()).serialize())
+
+
+def test_naive_pdr_2cnt():
+    width = 16
+    cnt = TwoCnt(width, zero_init = True)
+    #prop_good = cnt.false_property(65536-1001,1000)
+    prop = cnt.neq_property(65536-1000,1000)
+    pdr = PDR(cnt)
+    pdr.check_property(prop)
+    pdr.sanity_check_imply()
+    pdr.sanity_check_frame_monotone()
+    pdr.sanity_check_safe_inductive_inv(prop)
+    pdr.dump_frames()
+    print ('inv: ', simplify(pdr.get_inv()).serialize())
+
+
+def test_naive_pdr_2cnt_noload():
+    width = 16
+    cnt = TwoCntNoload(width, zero_init = True)
+    #prop_good = cnt.false_property(65536-1001,1000)
+    prop = cnt.neq_property(65536-1000,1000)
+    pdr = PDR(cnt)
+    pdr.check_property(prop)
+    pdr.sanity_check_imply()
+    pdr.sanity_check_frame_monotone()
+    pdr.sanity_check_safe_inductive_inv(prop)
+    pdr.dump_frames()
+    print ('inv: ', simplify(pdr.get_inv()).serialize())
+
+
+if __name__ == '__main__':
+    test_naive_pdr()
