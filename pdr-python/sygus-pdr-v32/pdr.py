@@ -4,7 +4,7 @@ from pysmt.typing import BOOL, BVType
 from pysmt.shortcuts import Interpolator, simplify
 from pysmt.logics import QF_BV
 # Type annotation
-from typing import Sequence, Callable
+from typing import Sequence, Callable, Mapping
 
 from utilfunc import _get_var, _get_cubes_with_more_var, _get_cubes_with_fewer_var
 from cegpbe import CexGuidedPBE
@@ -28,7 +28,7 @@ Config_cex_invalid_itp_guess_threshold = (4,5) # (18, 20)
 Config_try_drop_cex = (5,5) # (30, 50)  # after 30 frames, per 50
 #----------- NEEDS EXPERIMENTS -------------------
 Config_use_fact_in_sygus = False
-Config_strengthen_effort_for_prop = 1e10 # almost infinity (should make it 1000?)
+Config_strengthen_effort_for_prop = 1e4 # almost infinity (should make it 1000?)
 
 
 def pause():
@@ -62,24 +62,152 @@ class Lemma(object):
         self.origin = origin
         self.pushed = False
         # statistics
-        self.itp_push_failed = (0,0)
+        self.itp_push_fail = (0,0)
         self.itp_enhance_fail = (0,0)
+    def stats_push_fail(self,failed : bool):
+        self.itp_push_fail = (self.itp_push_fail[0]+(1 if failed else 0),self.itp_push_fail[1]+1)
+    def stats_sygus_fail(self,failed : bool):
+        self.itp_enhance_fail = (self.itp_enhance_fail[0]+(1 if failed else 0),self.itp_enhance_fail[1]+1)
     def direct_push(self): # -> Lemma:
         self.pushed = True
         ret = Lemma(expr = self.expr, cex = self.cex, origin = self.origin)
-        ret.itp_push_failed = (self.itp_push_failed[0] , self.itp_push_failed[0]+1)
+        self.stats_push_fail(False)
+        ret.itp_push_fail = self.itp_push_fail
         ret.itp_enhance_fail = self.itp_enhance_fail
         return ret
+    def subsume_by_frame(self, fidx : int , pdr : 'PDR') -> bool:
+        return pdr.is_valid(Implies(pdr.frame_prop(fidx) , _cube2prop(self.cex)))
+    def try_itp_push(self, fc : 'FrameCache', src_fidx:int, pdr:'PDR', remove_vars = [], keep_vars = None):
+        blockable = pdr.try_recursive_block(cube = self.cex, idx = src_fidx+1, cex_origin = self.origin,
+            frame_cache=fc, remove_vars=remove_vars,keep_vars=keep_vars )
+        if blockable:
+            assert len(fc.frames[src_fidx+1]) == 1, 'expect 1 interpolant on fc!'
+            self.stats_push_fail(False)
+            fc.frames[src_fidx+1][0].itp_push_fail = self.itp_push_fail
+            return (False, fc.frames[src_fidx+1][0])
+        return (True, None)
+    def try_strengthen(self, fc: 'FrameCache', bnd:int, src_fidx:int, pdr:'PDR', prev_ex, remove_vars = [], keep_vars = None):
+        # first try to strengthen itself
+        # then try to strengthen the extra ones on fc
+        # returns 'prop_succ, all_succ, rmBnd, unblockable_cube'
+        assert prev_ex is not None
+        while prev_ex is not None:
+            blockable = pdr.try_recursive_block(cube = prev_ex, idx = src_fidx, cex_origin = 'push_lemma',
+                frame_cache = fc, remove_vars=remove_vars, keep_vars=keep_vars)
+            if not blockable:
+                self.stats_push_fail(True)
+                return (False, False, bnd, prev_ex)
+            # get next prev_ex
+            prev_ex, _, _ = \
+                pdr.solveTrans(prevF=pdr.frame_prop_list(src_fidx) + fc.frame_prop_list(src_fidx), 
+                T=pdr.system.trans,prop=self.expr,variables=pdr.system.variables, 
+                init=None,remove_vars=remove_vars, keep_vars=keep_vars, 
+                findItp=False,get_post_state=False)
+            bnd -= 1
+            if bnd < 0:
+                self.stats_push_fail(True)
+                return (False, False, bnd, prev_ex) # bound limit reached
+        # add its direct push to fc next level
+        # prev_ex is None from this point
+        fc._add_lemma(lemma = self.direct_push(), fidx=src_fidx+1)
+        # prop_succ = True from this point
+        # try block all lemmas on the current frame
+        for l in fc.frames[src_fidx]:
+            # try push once to get prev_cex
+            prev_ex, _, _ = \
+                pdr.solveTrans(prevF=pdr.frame_prop_list(src_fidx) + fc.frame_prop_list(src_fidx), 
+                T=pdr.system.trans,prop=self.expr,variables=pdr.system.variables, 
+                init=None,remove_vars=remove_vars, keep_vars=keep_vars, 
+                findItp=False,get_post_state=False)
+            if prev_ex is None:
+                continue
+
+            prop_succ, all_succ, rmBnd, unblockable_cube = \
+                l.try_strengthen(fc=fc,bnd=bnd,src_fidx=src_fidx, pdr=pdr,prev_ex=prev_ex,\
+                remove_vars=remove_vars,keep_vars=keep_vars)
+            bnd = rmBnd
+            if bnd < 0:
+                return (True, False, bnd, None)
+            # if it is pushable, it has been pushed to the next frame
+            if not (all_succ or prop_succ):
+                assert (unblockable_cube is not None)
+                return (True, False, bnd, unblockable_cube)
+            # copy past
+        # all pushable
+        return  (True, True, bnd, None)
+    # *** END OF try_strengthen ***
+
+    #----------- !!! PUSH LEMMA !!! -------------------
+    def _try_sygus_repair(self, fidx:int, lemmaIdx:int, post_ex, new_itp, pdr:'PDR', remove_vars, keep_vars):
+        # TODO: better var set determination
+        opextract = OpExtractor() # work on itp 
+        opextract.walk(self.expr)
+        opextract.walk(new_itp)
+        lemma_var_set = opextract.Symbols
+        post_ex_var_set = _get_var(post_ex) # this is necessary
+        inv_var_set = lemma_var_set.union(post_ex_var_set)
+        sorted_inv_var_set = sorted(list(inv_var_set), key = lambda x: x.symbol_name())
+        blocked_cexs = self.cex # fidx+1 is fewer cex
+
+        # it is a question on whether using fact actually ....
+        facts = pdr.unblockable_fact[fidx+1]         # facts should be more facts
+        facts_on_inv_vars = _get_cubes_with_more_var(facts, inv_var_set) # and will shrink var
+        sorted_allvars = sorted(pdr.system.variables, key = lambda x: x.symbol_name())
+        sorted_prime_vars = sorted(pdr.system.prime_variables, key = lambda x: x.symbol_name())
+
+        pdr.dump_frames()
+        print ('  [push_lemma F%d] Invoke SyGuS Now:'%(fidx))
+        print ('----------------\nvarset:\n',inv_var_set)
+        print ('----------------\ncex:\n',   blocked_cexs)
+        print ('----------------\nfacts:\n', facts_on_inv_vars)
+        assert not (len(blocked_cexs) == 0 and len(facts_on_inv_vars) == 0)
+
+        # this is very important ? to remove the old one ? so it is a replacement
+        cex_guided_pbe = CexGuidedPBE( \
+            primal_vars = pdr.system.variables,
+            prime_vars  = pdr.system.prime_variables,
+            primal_map  = pdr.primal_map, # next_v --> v
+            prime_map   = pdr.prime_map, # v --> next_v
+            T =  pdr.system.trans,
+            F_idx_minus2 = pdr.frame_prop_select(fidx=fidx,selector=lambda lidx: lidx!=lemmaIdx),
+            Init = pdr.system.init, # IMPROVEMENT: Use init
+            inv_var_set = inv_var_set, # we can change this if necessary
+            facts_on_inv_vars = facts_on_inv_vars if Config_use_fact_in_sygus else [],
+            cexs_on_inv_vars = blocked_cexs,
+            sorted_inv_var_set = sorted_inv_var_set,
+            sorted_allvars = sorted_allvars,
+            sorted_prime_vars = sorted_prime_vars,
+            op_obj = opextract)
+        
+        # lemma /\ F /\ T => lemma'
+        itp = cex_guided_pbe.syn_lemma_F_T_implies_lemma_prime( \
+            fidx = fidx, lidx = lemmaIdx, itp = self.expr, \
+            frame_dump = pdr.dump_frames(toStr = True))
+        
+        if itp is None:
+            print ('  [push_lemma F%d] Repair lemma l%d failed: ' % (fidx, lemmaIdx))
+            self.stats_sygus_fail(True)
+            return None
+
+        itp_prime_var = itp.substitute(cex_guided_pbe.prime_map)
+        assert (pdr.is_valid(Implies(pdr.system.init, itp)))
+        assert (pdr.is_valid(Implies(And(pdr.frame_prop_list(fidx) + [pdr.system.trans, itp]), itp_prime_var ) ) )
+        ret = Lemma(expr = itp, cex = self.cex, origin = self.origin)
+        # get statistics right
+        self.stats_sygus_fail(False)
+        return ret
+    # *** END OF _try_sygus_repair ***
+
+    def serialize(self):
+        return self.expr.serialize()
     # think about repairing
     # think about contracting
     # think about itp change form
-    def serialize(self):
-        return self.expr.serialize()
 # *** END OF Lemma ***
 
 class FrameCache(object):
     def __init__(self):
-        self.frames = {} # idx -> list of lemmas
+        self.frames : Mapping[int, Sequence[Lemma] ] = {} # idx -> list of lemmas
     def _add_lemma(self, lemma, fidx):
         # TODO:
         pass
@@ -103,7 +231,7 @@ class PDR(object):
     def __init__(self, system):
         self.system = system
         init_lemma = Lemma(expr = system.init, cex = set(), origin = 'init')
-        self.frames = [ [init_lemma], []  ] # list of list of clauses
+        self.frames :  Sequence[ Sequence[Lemma] ] = [ [init_lemma], []  ] # list of list of lemmas
 
         self.prime_map = dict([(v, TransitionSystem.get_prime(v)) for v in self.system.variables])
         self.primal_map = dict([(TransitionSystem.get_prime(v), v) for v in self.system.variables])
@@ -119,12 +247,12 @@ class PDR(object):
 
 
     #----------- SOLVING PRIMITIVES -------------------
-    def is_valid(self, prop):
+    def is_valid(self, prop) -> bool:
         """returns True for valid property, prop : a single formula """
         if self.valid_solver.solve([Not(prop)]):
             return False
         return True
-    def is_sat(self, prop):
+    def is_sat(self, prop) -> bool:
         """returns True for valid property, prop : a single formula """
         if self.valid_solver.solve([prop]):
             return True
@@ -166,7 +294,7 @@ class PDR(object):
     def frame_prop(self, fidx): # all prop
         return And([l.expr for l in self.frames[fidx]])
     def frame_prop_select(self, fidx, selector : Callable[[int],bool]): # which to keep
-        return And([l.expr for lidx,l in enumerate(self.frames[fidx]) if  selector(lidx) ])
+        return [l.expr for lidx,l in enumerate(self.frames[fidx]) if  selector(lidx) ]
     def get_inv(self):
         return self.frame_prop(fidx = -1)
     def frame_implies(self, fidx, prop):
@@ -515,7 +643,6 @@ class PDR(object):
     # *** END OF push_lemma_from_the_lowest_frame ***
 
     #----------- !!! PUSH LEMMA !!! -------------------
-
     def push_lemma_from_frame(self, fidx, remove_vars, keep_vars):
         assert (len(self.frames) > fidx+1)
         assert (len(self.frames[fidx]) > 0 )
@@ -546,7 +673,7 @@ class PDR(object):
 
             prev_ex, post_ex, _ = \
                 self.solveTrans(prevF=self.frame_prop_list(fidx), 
-                T=self.system.trans,prop=lemma,variables=self.system.variables, 
+                T=self.system.trans,prop=lemma.expr,variables=self.system.variables, 
                 init=None,remove_vars=remove_vars, keep_vars=keep_vars, 
                 findItp=False,get_post_state=True)
             # variables there is to distinguish vars and prime vars
@@ -568,12 +695,13 @@ class PDR(object):
                 print ('  [push_lemma F%d] will give up on lemma as it blocks None, '%(fidx), 'l'+str(lemmaIdx)+':',  lemma.serialize())
                 continue
             # 2.1 if subsume, then we don't need to worry about
-            if lemma.subsume_by_next_frame():
+            if lemma.subsume_by_frame(fidx = fidx + 1, pdr = self): #should not touch frames in pdr
                 continue
             # 2.2 try itp repair
             itp_fc = FrameCache() # self as an fc also, but the solver etc also
-            cex_failed , itp = lemma.try_itp_push(itp_fc) # itp is also in the framecache
-            # itp is a Lemma
+            cex_failed , itp = lemma.try_itp_push(fc = itp_fc, src_fidx = fidx, pdr = self, remove_vars=remove_vars, keep_vars=keep_vars)
+            # itp is also in the framecache, should not touch frames in pdr
+            # itp is a Lemma object
             if cex_failed:
                 assert (itp is None)
                 # not pushable 
@@ -581,7 +709,9 @@ class PDR(object):
                 continue
 
             # 2.3 sygus repair
-            sygus_hint:Lemma = self._try_sygus_repair(lemma)
+            sygus_hint:Lemma = lemma._try_sygus_repair(fidx=fidx,\
+                lemmaIdx=lemmaIdx, post_ex=post_ex, new_itp=itp, pdr=self,\
+                remove_vars=remove_vars, keep_vars=keep_vars) # should not touch frames in pdr
             if sygus_hint is not None:
                 # succeed in repair
                 self._add_lemma(lemma = sygus_hint, fidx = fidx+1)
@@ -592,26 +722,25 @@ class PDR(object):
 
             # 2.4 try contraction 
             strengthen_fc = FrameCache() # self as an fc also, but the solver etc also
-            prop_succ, all_succ, time_out, unblockable_cube = lemma.try_strengthen(strengthen_fc, bound)
+            prop_succ, all_succ, rmBnd, unblockable_cube = lemma.try_strengthen(\
+                fc = strengthen_fc, bnd = Config_strengthen_effort_for_prop, src_fidx = fidx, pdr = self, prev_ex=prev_ex,
+                remove_vars=remove_vars,keep_vars=keep_vars)
             # full/prop itself/bad_state
             if all_succ or prop_succ:
                 print ('  [push_lemma F%d] strengthened l%d :'%(fidx, lemmaIdx) , lemma.serialize(), " with extra lemma")
                 self.merge_frame_cache(strengthen_fc)
                 continue
 
-            if unblockable_cube is not None:
-                assert (not time_out)
+            if (unblockable_cube is not None) and (rmBnd >= 0):
                 self._add_fact(fact = unblockable_cube, fidx = fidx)
+            
+            assert (rmBnd < 0) # bound limit reached
 
+            # try strengthen, but unable to even strengthen the main prop in
+            # the given time
             print ('  [push_lemma F%d] unable to push l%d :'%(fidx, lemmaIdx) , lemma.serialize())
             print ('  [push_lemma F%d] use new itp l%d :'%(fidx, lemmaIdx), itp.serialize())
-                
-
-
-
-            
-
-                
+            self.merge_frame_cache(itp_fc)
 
             # get its recursive blocked
             # try itp push : given a framcecache?
