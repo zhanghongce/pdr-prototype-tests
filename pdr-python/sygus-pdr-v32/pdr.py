@@ -325,6 +325,8 @@ class PDR(object):
         return [l.expr for lidx,l in enumerate(self.frames[fidx]) if  selector(lidx) ]
     def get_inv(self):
         return self.frame_prop(fidx = -1)
+    def get_inv_str(self):
+        return simplify(self.frame_prop(fidx = -1)).serialize()
     def frame_implies(self, fidx, prop):
         if self.is_valid(Implies(self.frame_prop(fidx), prop)):
             return True
@@ -808,7 +810,6 @@ class PDR(object):
             for lemma in lemmas:
                 self._add_lemma(lemma = lemma, fidx = fidx)
     # *** END OF merge_frame_cache ***
-
 
 
 def test_naive_pdr():

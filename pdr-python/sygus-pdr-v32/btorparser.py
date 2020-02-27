@@ -21,6 +21,8 @@ from pysmt.shortcuts import Not, TRUE, And, BVNot, BVNeg, BVAnd, BVOr, BVAdd, Or
 from pysmt.typing import BOOL, BVType, ArrayType
 
 from sts import TransitionSystem as TS
+# compared to keep a map, we'd rather just do a walk
+from opextract import VarExtractor
 
 
 Config_Warning = True
@@ -181,7 +183,7 @@ class BTOR2Parser:
         # where everything is a pysmt FNode
         # for btor, the condition is always True
         ftrans = []
-
+        nxt_node_set = set() # set of int, to rule out them in the check
         initlist = []
         invarlist = []
 
@@ -400,6 +402,7 @@ class BTOR2Parser:
                     lval = TS.get_prime(getnode(nids[1]))
                     rval = getnode(nids[2])
 
+                nxt_node_set.add(nid)
                 nodemap[nid] = EqualsOrIff(lval, rval)
 
                 ftrans.append(
@@ -456,12 +459,15 @@ class BTOR2Parser:
                 #    except:
                 #        pass
 
-        if Config_Warning:
+        if Config_Warning: #TODO: fix the warning!
             name = lambda x: str(nodemap[x]) if nodemap[x].is_symbol() else x
-            uncovered = [name(x) for x in nodemap if x not in node_covered]
+            uncovered = [name(x) for x in nodemap if x not in node_covered and x not in nxt_node_set]
             uncovered.sort()
             if len(uncovered) > 0:
                 print("Unlinked nodes \"%s\""%",".join(uncovered))
+            nxt_node_used = node_covered.intersection(nxt_node_set)
+            if len(nxt_node_used) > 0:
+                print('Next node used : ', nxt_node_used)
 
         if not self.symbolic_init:
             init = simplify(And(initlist))
@@ -472,9 +478,17 @@ class BTOR2Parser:
 
         # instead of trans, we're using the ftrans format -- see below
         ts.set_init(init)
-
+        # add dependent relations
+        for prime_var, rhs in ftrans:
+            var_extract = VarExtractor()
+            var_extract.walk(rhs)
+            ts.record_dependent_sv(TS.get_primal(prime_var), var_extract.Symbols)
+        ts.finish_record_dependent_sv()
+        
         # add ftrans
         ts.add_func_trans( And([EqualsOrIff(prime_var,rhs) for prime_var, rhs in ftrans]) )
+        ts.set_assertion(simplify(And([p[2] for p in invar_props])))
+        ts.set_assumption(invar)
         ts.finish_adding()
 
         return (ts, invar_props)
@@ -487,6 +501,10 @@ def test_btor_parsing():
     print (sts.init)
     print (sts.trans.serialize())
     print (propList[0][2].serialize())
+    for pv, prevs in sts.sv_dependent_map.items():
+        print (str(pv), '<---', prevs)
+    for v, nxtvs in sts.sv_influence_map.items():
+        print (str(v), '--->', nxtvs)
 
 
 if __name__ == '__main__':

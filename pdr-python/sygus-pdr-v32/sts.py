@@ -1,5 +1,5 @@
 # state transition system
-from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV, EqualsOrIff, BVNot, BVSub
+from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV, EqualsOrIff, BVNot, BVSub, TRUE
 from pysmt.typing import BOOL, BVType
 
 class TransitionSystem(object):
@@ -17,11 +17,20 @@ class TransitionSystem(object):
         self.input_var = set()
         self.output_var = set()
         self.wires = set()
+        self.assumption = TRUE
+        self.assertion = TRUE
+        self.sv_dependent_map = dict() # state_var -> state_var/input (prev cycle)
+        self.sv_influence_map = dict() # state_var -> state_var (next cycle)
 
     @classmethod
     def get_prime(cls, v):
         """Returns the 'next' of the given variable"""
         return Symbol("%s_prime" % v.symbol_name(), v.symbol_type())
+    @classmethod
+    def get_primal(cls, v):
+        """Returns the 'prev' of the given prime variable"""
+        assert v.symbol_name().endswith("_prime")
+        return Symbol("%s" % v.symbol_name()[:-6], v.symbol_type())
 
     def add_func_trans(self, trans):
         self.trans = trans
@@ -37,12 +46,25 @@ class TransitionSystem(object):
         self.state_var.add(v)
     def add_wire(self,v):
         self.wires.add(v)
-
+    def set_assertion(self, a):
+        self.assertion = a
+    def set_assumption(self, a):
+        self.assumption = a
     def finish_adding(self):
         self.variables = self.output_var.union(self.input_var.union(self.state_var))
         self.prime_variables = [TransitionSystem.get_prime(v) for v in self.variables]
 
-
+    def record_dependent_sv(self, v, coiv):
+        assert isinstance(coiv, set)
+        self.sv_dependent_map[v] = coiv
+    def finish_record_dependent_sv(self):
+        """will compute the influence set"""
+        for pv, coiv in self.sv_dependent_map.items():
+            for prev in coiv:
+                if prev not in self.sv_influence_map:
+                    self.sv_influence_map[prev] = set()
+                self.sv_influence_map[prev].add(pv)
+                
 
 class BaseAddrCnt(TransitionSystem):
     def __init__(self, nbits):

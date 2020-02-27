@@ -62,6 +62,32 @@ def _const_to_str(fn):
     return 'true' if fn.is_true() else 'false'
   assert (False) # unknown type
 
+
+class VarExtractor(DagWalker):
+    def __init__(self, env=None, invalidate_memoization=None):
+
+        # 0 for bool
+        self.Symbols = set([])
+        # comp/eq --> '='
+
+        # no need to worry about variables
+        VarExtractor.set_handler(OpExtractor.walk_nop, *op.ALL_TYPES)
+        VarExtractor.set_handler(OpExtractor.walk_symbol_rec, op.SYMBOL)
+
+        # the above must be done first
+
+        DagWalker.__init__(self,
+                           env=env,
+                           invalidate_memoization=invalidate_memoization)
+
+    def walk_symbol_rec(self, formula, args, **kwargs):
+        self.Symbols.add( formula )
+                               
+    def walk_nop(self, formula, args, **kwargs):
+        pass # do nothing
+
+
+
 class OpExtractor(DagWalker):
     def __init__(self, env=None, invalidate_memoization=None):
 
