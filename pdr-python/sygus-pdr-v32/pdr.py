@@ -58,7 +58,7 @@ class Lemma(object):
 
     def __init__(self, expr, cex, origin):
         # cex should be a set
-        assert (isinstance(cex, set))
+        assert (isinstance(cex, list))
         self.expr = expr
         self.cex  = cex
         self.origin = origin
@@ -81,10 +81,14 @@ class Lemma(object):
         ret.itp_enhance_fail = self.itp_enhance_fail
         return ret
     def subsume_by_frame(self, fidx : int , pdr : 'PDR') -> bool:
-        return pdr.is_valid(Implies(pdr.frame_prop(fidx) , _cube2prop(self.cex)))
+        for c in self.cex:
+            if not pdr.is_valid(Implies(pdr.frame_prop(fidx) , _cube2prop(c))):
+                return False
+        return True
     # *** END OF subsume_by_frame ***
     def try_itp_push(self, fc : 'FrameCache', src_fidx:int, pdr:'PDR', remove_vars = [], keep_vars = None):
-        blockable = pdr.try_recursive_block(cube = self.cex, idx = src_fidx+1, cex_origin = self.origin,
+        assert len(self.cex) == 1
+        blockable = pdr.try_recursive_block(cube = self.cex[0], idx = src_fidx+1, cex_origin = self.origin,
             frame_cache=fc, remove_vars=remove_vars,keep_vars=keep_vars )
         if blockable:
             assert len(fc.frames[src_fidx+1]) == 1, 'expect 1 interpolant on fc!'
@@ -149,15 +153,15 @@ class Lemma(object):
         # TODO: better var set determination
         opextract = OpExtractor() # work on itp 
         opextract.walk(self.expr)
-        opextract.walk(new_itp)
+        opextract.walk(new_itp.expr)
         lemma_var_set = opextract.Symbols
         post_ex_var_set = _get_var(post_ex) # this is necessary
         inv_var_set = lemma_var_set.union(post_ex_var_set)
         sorted_inv_var_set = sorted(list(inv_var_set), key = lambda x: x.symbol_name())
-        blocked_cexs = self.cex # fidx+1 is fewer cex
+        blocked_cexs = [dict(c) for c in self.cex] # fidx+1 is fewer cex
 
         # it is a question on whether using fact actually ....
-        facts = pdr.unblockable_fact[fidx+1]         # facts should be more facts
+        facts = pdr.unblockable_fact.get(fidx+1,[])         # facts should be more facts
         facts_on_inv_vars = _get_cubes_with_more_var(facts, inv_var_set) # and will shrink var
         sorted_allvars = sorted(pdr.system.variables, key = lambda x: x.symbol_name())
         sorted_prime_vars = sorted(pdr.system.prime_variables, key = lambda x: x.symbol_name())
@@ -210,15 +214,15 @@ class Lemma(object):
     def dump_expr(self) -> str:
         return ( 
             ('P' if self.pushed else ' ') + 
-            ('|' + self.expr.serialize()) +
-            ('|' + self.origin) +
-            ('|' + self.itp_push_fail +','+self.itp_enhance_fail) )
+            (' | ' + self.expr.serialize()) +
+            (' | ' + self.origin) +
+            (' | ' + str(self.itp_push_fail) +','+str(self.itp_enhance_fail) ) )
     def dump_cex(self) -> str:
         return ( 
             ('P' if self.pushed else ' ') + 
-            ('| {' + ' , '.join ( [print_cube(c) for c in self.cex]) + '}') +
-            ('|' + self.origin) +
-            ('|' + self.itp_push_fail +','+self.itp_enhance_fail) )
+            (' | {' + ' , '.join ( [print_cube(c) for c in self.cex]) + '}') +
+            (' | ' + self.origin) +
+            (' | ' + str(self.itp_push_fail) +','+str(self.itp_enhance_fail) ) )
     # think about repairing
     # think about contracting
     # think about itp change form
@@ -239,7 +243,8 @@ class FrameCache(object):
             self._add_lemma(lemma = l_prev, fidx = fidx)
     # *** END OF _add_pushed_lemma ***
     def frame_prop_list(self, fidx):
-        assert fidx in self.frames
+        if fidx not in self.frames:
+            return []
         return [l.expr for l in self.frames[fidx]]
     # *** END OF frame_prop_list ***
 
@@ -253,7 +258,7 @@ class FrameCache(object):
 class PDR(object):
     def __init__(self, system):
         self.system = system
-        init_lemma = Lemma(expr = system.init, cex = set(), origin = 'init')
+        init_lemma = Lemma(expr = system.init, cex = [], origin = 'init')
         self.frames :  Sequence[ Sequence[Lemma] ] = [ [init_lemma], []  ] # list of list of lemmas
 
         self.prime_map = dict([(v, TransitionSystem.get_prime(v)) for v in self.system.variables])
@@ -454,7 +459,7 @@ class PDR(object):
         #print (f)
         if self.solver.solve(f):
             model = self.solver.get_model()
-            pre_ex = [], post_ex = []
+            pre_ex = []; post_ex = []
             for v, val in model:
                 if v in variables:
                     # pre_ex
@@ -548,7 +553,7 @@ class PDR(object):
                 remove_vars = remove_vars, keep_vars = keep_vars, findItp = True, get_post_state=False )
 
             if model is None:
-                lemma = Lemma(expr=itp, cex={cex}, origin=cex_origin)
+                lemma = Lemma(expr=itp, cex=[cex], origin=cex_origin)
                 self._add_lemma(lemma = lemma, fidx = fidx)
                 self._add_pushed_lemma(lemma = lemma, start = 1, end = fidx -1 )
                 heapq.heappop(priorityQueue) # pop this cex
@@ -604,7 +609,7 @@ class PDR(object):
                 remove_vars = remove_vars, keep_vars = keep_vars, findItp = True, get_post_state=False )
 
             if model is None:
-                lemma = Lemma(expr=itp, cex={cex}, origin=cex_origin)
+                lemma = Lemma(expr=itp, cex=[cex], origin=cex_origin)
                 frame_cache._add_lemma(lemma = lemma, fidx = fidx)
                 frame_cache._add_pushed_lemma(lemma = lemma, start = 1, end = fidx -1 )
                 heapq.heappop(priorityQueue) # pop this cex
@@ -696,7 +701,7 @@ class PDR(object):
 
         # 1. push facts
         start_fact_idx = self.facts_pushed_idxs_map.get(fidx, 0)
-        end_fact_idx = len(self.unblockable_fact[fidx])
+        end_fact_idx = len(self.unblockable_fact.get(fidx,[]))
         if fidx in self.unblockable_fact:
             for factIdx in range(start_fact_idx, end_fact_idx):
                 fact = self.unblockable_fact[fidx][factIdx]
@@ -806,7 +811,7 @@ class PDR(object):
 
 
 def test_naive_pdr():
-    width = 16
+    width = 4
     cnt = BaseAddrCnt(width)
     prop = cnt.neq_property(1 << (width-1),1,1)
     pdr = PDR(cnt)

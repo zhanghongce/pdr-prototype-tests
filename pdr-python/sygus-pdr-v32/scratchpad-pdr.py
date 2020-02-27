@@ -104,70 +104,6 @@
                     self.lemma_to_cex_map_perframe[idx][lidx+1] = cidxs
 
 
-    def check_init_failed(self, prop, remove_vars, keep_vars):
-        init_cex = self.solve(self.frames[0] + [ Not(prop) ] )
-        print ("[Checking init] F0 and not P")
-        if init_cex is not None:
-            print("[Checking init] Property failed at INIT")
-            print("[Checking init] CEX: ", self.print_cube(init_cex))
-            return True
-        print ("[Checking init]  F0 and T and not P'")
-        init_cex = self.get_bad_state_from_property_invalid_after_trans(
-            prop = prop, idx = 0, use_init = True, remove_vars = remove_vars, keep_vars = keep_vars)
-        if init_cex is not None:
-            print("[Checking init] Property failed at F1")
-            print("[Checking init] CEX @F0: ", self.print_cube(init_cex))
-            return True
-        print ("[Checking init] Done")
-        return False
-
-
-
-    def check_property(self, prop, remove_vars = [], keep_vars = None):
-        """Property Directed Reachability approach without optimizations."""
-        print("[Checking property] Property: %s." % prop)
-
-        if self.check_init_failed(prop, remove_vars, keep_vars):
-            return False
-
-        self._add_lemma(fidx = 1, cidxs = {}, lemma = prop)
-        # its interpolant may be too small
-
-        while True:
-            self.sanity_check_frame_monotone()
-            self.sanity_check_imply()
-            self.dump_frames()
-            print ('Total Frames: %d, L %d , C %d ' %( len(self.frames) , len(self.frames[-1]), len(self.cexs_blocked.get(len(self.frames)-1,[]))))
-            pause ()
-
-            # frame[-1] /\ T -> not (prop)
-            cube = self.get_bad_state_from_property_invalid_after_trans( \
-                prop = prop, idx = len(self.frames)-1, use_init = False, remove_vars = remove_vars, keep_vars = keep_vars)
-
-            print ('[Checking property] Get cube: ', cube , ' @F%d' % (len(self.frames)-1))
-            # cube is list of (var, assignments)
-            if cube is not None:
-                # Blocking phase of a bad state
-                if not self.recursive_block(cube, len(self.frames)-1, cex_origin = (None,'prop'), remove_vars, keep_vars ):
-                    print("[Checking property] Bug found at step %d" % (len(self.frames)))
-                    return False
-                else:
-                    print("[Checking property] Cube blocked '%s'" % self.print_cube(cube))
-            else:
-                # Checking if the last two frames are equivalent i.e., are inductive
-                if self.is_last_two_frames_inductive():
-                    print("[Checking property] The system is safe, frame : %d" % len(self.frames) )
-                    return True
-                else:
-                    print("[Checking property] Adding frame %d..." % (len(self.frames)))
-                    self.frames.append([])
-                    self.push_lemma_from_the_lowest_frame(remove_vars, keep_vars) # TODO
-                    if self.is_last_two_frames_inductive():
-                        print("[Checking property] The system is safe, frame : %d" % len(self.frames) )
-                        return True
-
-                    # you should try to push existing clauses
-    
     # TODO: problem : INIT -> next frame ????
     # put too few in the      
     def push_lemma_from_the_lowest_frame(self, remove_vars, keep_vars):
@@ -176,69 +112,6 @@
         print ('[pushes] F%d --- F%d' % (start_frame, len(self.frames)-2))
         for fidx in range(start_frame, len(self.frames)-1):
             self.push_lemma_from_frame(fidx, remove_vars, keep_vars)
-
-    # used in push lemma
-    # it is okay not to add prop on the previous frame, already in the frame
-    # it is okay not to deal with init
-    def get_pre_post_state_from_property_invalid_after_trans(self, prop, fidx, T, variables, remove_vars, keep_vars ):
-        prevF = self.frames[fidx]
-        print ('      [pre_post_p_trans] Property:', prop.serialize())
-        print ('      [pre_post_p_trans] var will => prime')
-        #print ('      [pre_post_p_trans] prevF:', prevF)
-
-        pre_ex = []
-        post_ex = []
-
-        if self.solver.solve( prevF + [T, Not( prop.substitute(self.prime_map))] ):
-            model = self.solver.get_model()
-            for v, val in model:
-                if v in variables: # pre_ex
-                    if v in remove_vars:
-                        continue
-                    if isinstance(keep_vars, list) and len(keep_vars) > 0 and v not in keep_vars:
-                        continue
-                    pre_ex.append((v,val))
-                else:
-                    v_primal = self.primal_map[v]
-                    if v_primal in remove_vars:
-                        continue
-                    if isinstance(keep_vars, list) and len(keep_vars) > 0 and v_primal not in keep_vars:
-                        continue
-                    post_ex.append((v_primal,val))
-            assert (len(pre_ex) > 0 and len(post_ex) > 0)
-            return pre_ex, post_ex
-                #
-        return None, None # pre/post ex: None
-
-    def shrink_var_cexs(self, cexs, fidx, varset, remove_vars, keep_vars):
-
-        print ('  [shrink_var_cexs on F%d] get %d before shrink' % (fidx,len(cexs)))
-        small_cexs = []
-        set_idx_of_cex_blocked = set()
-
-        for cidx, cube in enumerate(cexs):
-            if _get_var(cube).issubset(varset):
-                small_cexs.append(dict(cube))
-
-            small_cube = []
-            for v, val in cube:
-                if v in varset:
-                    small_cube.append((v, val))
-            assert (len(small_cube) > 0)
-
-            cex_origin = self.cex_origin.get(fidx,dict()).get(cidx,None)
-            if self.recursive_block(small_cube, fidx, cex_origin = cex_origin, remove_vars = remove_vars, keep_vars = keep_vars):
-                small_cexs.append(dict(small_cube))
-                set_idx_of_cex_blocked.add(cidx)
-
-                if (self.cexs_blocked[fidx][-1] == small_cube):
-                    #self.dump_frames()
-                    #print ('fidx:',fidx, '| cexs:', cexs, '| varset:', varset)
-                    #print ('small_cube: ', str(small_cube))
-                    set_idx_of_cex_blocked.add(len(self.cexs_blocked[fidx]) - 1) # subsume
-
-        print ('  [shrink_var_cexs on F%d] get %d/%d after shrink' % (fidx,len(small_cexs), len(cexs)))
-        return small_cexs, set_idx_of_cex_blocked
 
     # only used in push cex
     # in the case of cex pushed but not added to the next frame : it is subsumed!
@@ -296,10 +169,6 @@
         end_lemma_idx   = len(self.frames[fidx]) # we can decide if we want to update this
         # iterate over the lemmas and the cex they blocked, tried to push 
 
-        if (len(self.cexs_blocked.get(fidx,[])) == 0): # else no cex to push
-            print ('  [push_lemma from F%d] <WARN> no cex to push from F%d'%(fidx,fidx))
-            pause ()
-            assert (False) # we should not expect this case
         #assert (fidx in self.cexs_blocked)
 
         if fidx in self.unblockable_fact:
@@ -613,151 +482,12 @@
 
 
 
-    # used in check_property, check_init_failed
-    # not in push_lemma, because we also want the pre-&post-states
-    def get_bad_state_from_property_invalid_after_trans(self, prop, idx, use_init, remove_vars = [], keep_vars = None):
-        """Extracts a reachable state that intersects the negation
-        of the property and the last current frame"""
-        assert (idx >= 0)
-        print ('    [F%d -> prop]' % idx)
-        md, itp = self.solveTrans(self.frames[idx], \
-            T = self.system.trans, prop = prop, \
-            init = self.system.init if use_init else None,
-            variables = self.system.variables, \
-            remove_vars = remove_vars, keep_vars = keep_vars, findItp = True )
-        # no need for itp here
-        #pause()
-        return md
 
-
-
-    # you may want to have the interpolant here
-    # used in recursive_block  and  get_bad_state_from_property_invalid_after_trans
-    def solveTrans(self, prevF, T, prop , variables, init, remove_vars = [], keep_vars = None, findItp = False):
-        # prevF /\ T(p, prime) --> not prop, if sat
-        print ('      [solveTrans] Property:', prop.serialize())
-        print ('      [solveTrans] var will => prime')
-        #print ('      [solveTrans] prevF:', prevF)
-        print ('      [solveTrans] use Init:', init is not None)
-
-        if init is None:
-            f = prevF + [T, Not( prop.substitute(self.prime_map))]
-        else:
-            f = [Or(And(prevF+[T]), init.substitute(self.prime_map) ) , Not( prop.substitute(self.prime_map))]
-        #print (f)
-
-        if self.solver.solve(f):
-            model = self.solver.get_model()
-            retL = []
-            for v, val in model:
-                if v not in variables: # if it is prime variable
-                    continue # ignore it
-                if v in remove_vars:
-                    continue
-                if isinstance(keep_vars, list) and len(keep_vars) > 0 and v not in keep_vars:
-                    continue
-                retL.append((v,val))
-            assert (len(retL) > 0) # otherwise we are removing too many variables!
-            #return And(retL)
-            return retL, None
-        Itp = None
-        if findItp:
-            if init is None:
-                a = And(prevF + [T])
-                b = Not( prop.substitute(self.prime_map))
-            else:
-                a = f[0]
-                b = f[1]
-            Itp = self.itp_solver.binary_interpolant( a = a, b = b)
-            Itp = And(Itp)
-            Itp = Itp.substitute(self.primal_map)
-            if Config_simplify_itp:
-                Itp = simplify(Itp)
-            print ('    [solveTrans] get itp: ', Itp.serialize())
-            #pause()
-        return None, Itp
-
+    # ---------------------------------------------------------------------------------
 
 
     # ---------------------------------------------------------------------------------
-    def get_inv(self):
-        return And(self.frames[-1])
-
-    @staticmethod
-    def print_cube(c):
-        return ( '(' + ( ' && '.join([v.symbol_name() + ' = ' + str(val) for v, val in c]) ) + ')'  ) 
-
-
-    # ---------------------------------------------------------------------------------
-                
-    def recursive_block(self, cube, idx, cex_origin, remove_vars = [], keep_vars = None ):
-        assert isinstance(cex_origin, tuple )
-        cex_push_origin = cex_origin[0]
-        cex_create_origin = cex_origin[1]
-
-        priorityQueue = []
-        print ('      [block] Try @F%d' % idx, self.print_cube(cube) )
-
-        prop = _cube2prop(cube)
-        if self.solve(self.frames[idx] + [Not( prop )] ) is None:
-            print ('      [block] already blocked by F%d' % idx)
-            return True
-
-        heapq.heappush(priorityQueue, (idx, cube))
-        while len(priorityQueue) > 0:
-            fidx, cex = heapq.nsmallest(1, priorityQueue)[0]
-
-            if fidx == 0:
-                model_init_frame = self.solve( \
-                    [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex])
-                assert (model_init_frame is not None)
-                print ('      [block] CEX found!')
-                return False
-
-            prop = Not(And([EqualsOrIff(v,val) for v,val in cex]))
-            
-            # Question: too old itp? useful or not?
-            # push on older frames also? for new ITP?
-            print ('      [block] check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
-            #if Config_rm_cex_in_prev:
-            #    if (self.solve( \
-            #            [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]) is not None):
-            #        print ('      [block] CEX is reachable -- direct init!')
-            #        return False
-            
-            model, itp = self.solveTrans(self.frames[fidx-1] + ([prop] if Config_rm_cex_in_prev else []), \
-                T = self.system.trans, prop = prop, \
-                variables = self.system.variables, \
-                init = self.system.init, \
-                remove_vars = remove_vars, keep_vars = keep_vars, findItp = True )
-
-            if model is None:
-                if cex_push_origin is not None:
-                  new_cex_push_origin = cex_push_origin if idx == fidx else None
-                else:
-                  new_cex_push_origin = None
-
-                cidx = self._add_cex(fidx = fidx, cex = cex, origin = (new_cex_push_origin, cex_create_origin))
-
-                self._add_lemma(lemma = itp, fidx = fidx, cidxs = {cidx} )
-                if not self.is_valid( Implies(And(self.frames[fidx-1]), itp) ):
-                    self._add_lemma_to_all_prev_frame( end_frame_id = fidx-1, lemma = itp )
-                    print ('    [block] add ITP to F1 ->>- F%d: ' % (fidx-1), itp.serialize())
-                    # add cex to all previous ones and this will block it 
-                    # or, maybe you don't need it because it is already pushed before the current frame
-                    # and should not interfere with the not yet pushed lemma.
-
-                heapq.heappop(priorityQueue) # pop this cex
-
-            else:
-                # model is not None
-                print ('      [block] push to queue, F%d' % (fidx-1), self.print_cube(model))
-                heapq.heappush(priorityQueue, (fidx-1, model))
-        # TODO: 
-        print ('      [block] Succeed, return.')
-        return True
-
-        # for the CTG, see if we can block it or not?
+             
 
 
 def test_naive_pdr():

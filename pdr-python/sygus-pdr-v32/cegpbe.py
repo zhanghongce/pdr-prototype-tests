@@ -26,7 +26,7 @@ class Sim:
         self.constr = constr
         self.T = T
         self.prime_vars = prime_vars
-        self.primal_vars
+        self.primal_vars = primal_vars
         self.primal_map = primal_map
         self.to_block_prime_state_list = [] # list of list of (v, val)
 
@@ -63,7 +63,7 @@ class Sim:
             continue
 
           v_primal_vars = self.primal_map[v]
-          if v_primal_vars in self.remove_vars:
+          if v_primal_vars in remove_vars:
             continue
           if isinstance(keep_vars, list) and len(keep_vars) > 0 and v_primal_vars not in keep_vars:
             continue
@@ -94,7 +94,8 @@ class CexGuidedPBE:
       # itp is used for opextract
       # ctg is used for vars
       #itp, ctg, facts, blocked_cexs): # allvars, prime_vars
-        assert (len(facts_on_inv_vars) > 0)
+        if (len(facts_on_inv_vars) == 0):
+          print ('[SyGuS] Warning: No facts!')
         assert (len(cexs_on_inv_vars) > 0 )
         # otherwise no need to start such synthesis ? 
         # blocked_cexs can be loosen, from T, F_idx_minus2

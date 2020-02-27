@@ -50,7 +50,8 @@ def _sanity_check_no_conflict(facts, blocked, vset):
   for cube in facts:
     # facts with more vars
     facts_or_list.append( And([EqualsOrIff(v,val) for v,val in cube.items() if v in vset]))
-  solver.add_assertion(Or(facts_or_list))
+  if len(facts_or_list) > 0:
+    solver.add_assertion(Or(facts_or_list))
 
   for cube in blocked:
     solver.add_assertion(Not(And([EqualsOrIff(v,val) for v,val in cube.items() if v in vset])))
@@ -197,7 +198,7 @@ class SyGusQueryGen:
       # self.LangConstructs
 
         assert (Config_use_trans or Config_use_facts) # you have to use at least one pos example
-        if Config_use_trans or Config_use_Fminus2_imply:
+        if Config_use_trans:
           assert (isinstance(F_idx_minus2,list))
         else:
           print ('[SyGuS] Warning: please note, F_idx_minus2 is not used!')
