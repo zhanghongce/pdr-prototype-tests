@@ -759,7 +759,8 @@ class PDR(object):
                 # not pushable 
                 print ('  [push_lemma F%d] skip r-block l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' as its cex cannot be pushed.')
                 continue
-
+            
+            print ('  [push_lemma F%d] try sygus repair l%d :'%(fidx, lemmaIdx) , lemma.serialize())
             # 2.3 sygus repair
             sygus_hint:Lemma = lemma._try_sygus_repair(fidx=fidx,\
                 lemmaIdx=lemmaIdx, post_ex=post_ex, new_itp=itp, pdr=self,\
@@ -779,7 +780,7 @@ class PDR(object):
                 remove_vars=remove_vars,keep_vars=keep_vars)
             # full/prop itself/bad_state
             if all_succ or prop_succ:
-                print ('  [push_lemma F%d] strengthened l%d :'%(fidx, lemmaIdx) , lemma.serialize(), " with extra lemma")
+                print ('  [push_lemma F%d] strengthened l%d :'%(fidx, lemmaIdx) , lemma.serialize(), " with extra lemma, ", 'A' if all_succ else 'P')
                 self.merge_frame_cache(strengthen_fc)
                 continue
 
@@ -811,7 +812,7 @@ class PDR(object):
 
 
 def test_naive_pdr():
-    width = 4
+    width = 32
     cnt = BaseAddrCnt(width)
     prop = cnt.neq_property(1 << (width-1),1,1)
     pdr = PDR(cnt)
@@ -824,7 +825,7 @@ def test_naive_pdr():
 
 
 def test_naive_pdr_2cnt():
-    width = 16
+    width = 32
     cnt = TwoCnt(width, zero_init = True)
     #prop_good = cnt.false_property(65536-1001,1000)
     prop = cnt.neq_property(65536-1000,1000)
@@ -852,4 +853,4 @@ def test_naive_pdr_2cnt_noload():
 
 
 if __name__ == '__main__':
-    test_naive_pdr()
+    test_naive_pdr_2cnt_noload()
