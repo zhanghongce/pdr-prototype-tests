@@ -644,7 +644,7 @@ class PDR(object):
         return False
     # *** END OF check_init_failed ***
 
-    def check_property(self, prop, remove_vars = [], keep_vars = None):
+    def check_property(self, prop, remove_vars = [], keep_vars = None, var_keep_func = None):
         """Property Directed Reachability approach without optimizations."""
         print("[Checking property] Property: %s." % prop)
 

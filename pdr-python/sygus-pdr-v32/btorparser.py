@@ -17,7 +17,7 @@ from pysmt.fnode import FNode
 from pysmt.shortcuts import Not, TRUE, And, BVNot, BVNeg, BVAnd, BVOr, BVAdd, Or, Symbol, BV, EqualsOrIff, \
     Implies, BVMul, BVExtract, BVUGT, BVUGE, BVULT, BVULE, BVSGT, BVSGE, BVSLT, BVSLE, \
     Ite, BVZExt, BVSExt, BVXor, BVConcat, get_type, BVSub, Xor, Select, Store, BVComp, simplify, \
-    BVLShl, BVAShr, BVLShr, Array
+    BVLShl, BVAShr, BVLShr, Array, BVSRem, BVURem, BVSDiv, BVUDiv
 from pysmt.typing import BOOL, BVType, ArrayType
 
 from sts import TransitionSystem as TS
@@ -93,6 +93,10 @@ SUB="sub"
 SLL="sll"
 SRA="sra"
 SRL="srl"
+SREM="srem"
+UREM="urem"
+SDIV="sdiv"
+UDIV="udiv"
 
 INIT="init"
 NEXT="next"
@@ -349,6 +353,16 @@ class BTOR2Parser:
 
             if ntype == SUB:
                 nodemap[nid] = BVSub(B2BV(getnode(nids[1])), B2BV(getnode(nids[2])))
+            
+            # mod/div
+            if ntype == SREM:
+                nodemap[nid] = BVSRem(B2BV(getnode(nids[1])), B2BV(getnode(nids[2])))
+            if ntype == UREM:
+                nodemap[nid] = BVURem(B2BV(getnode(nids[1])), B2BV(getnode(nids[2])))
+            if ntype == SDIV:
+                nodemap[nid] = BVSDiv(B2BV(getnode(nids[1])), B2BV(getnode(nids[2])))
+            if ntype == UDIV:
+                nodemap[nid] = BVUDiv(B2BV(getnode(nids[1])), B2BV(getnode(nids[2])))
 
             if ntype == UGT:
                 nodemap[nid] = BVUGT(B2BV(getnode(nids[1])), B2BV(getnode(nids[2])))
