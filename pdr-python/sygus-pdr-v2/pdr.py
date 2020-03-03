@@ -995,4 +995,4 @@ def test_naive_pdr_2cnt_noload():
 
 
 if __name__ == '__main__':
-    test_naive_pdr()
+    test_naive_pdr_2cnt()

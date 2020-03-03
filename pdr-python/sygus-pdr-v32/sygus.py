@@ -12,19 +12,26 @@ Config_use_init = True
 Config_use_facts = True
 Config_smtlib2_daggify = False # maybe make it to True ?
 
+
 def _to_type_string(v):
   if v.get_type().is_bool_type():
     return 'Bool'
   assert (v.get_type().is_bv_type())
   return ('(_ BitVec %d)' % v.bv_width())
 
+def sanitize_name(s):
+  goodname = set(s) <= set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._')
+  if not goodname:
+    return '|'+s+'|'
+  return s # normal
+
 def _to_name_type(v): # v should be a pysmt v
   assert (v.is_symbol())
-  return '('+v.symbol_name() + " " + _to_type_string(v)+')'
+  return '('+ sanitize_name(v.symbol_name()) + " " + _to_type_string(v)+')'
 
 def _to_name_type_suffix_no_p(v, suffix): # v should be a pysmt v
   assert (v.is_symbol())
-  return v.symbol_name() + suffix + " " + _to_type_string(v)
+  return sanitize_name(v.symbol_name() + suffix) + " " + _to_type_string(v)
 
 def _to_args(vl):
   return '('+ (' '.join([_to_name_type(v) for v in vl])) + ')'
@@ -250,9 +257,9 @@ class SyGusQueryGen:
             w = _get_unified_width(v)
             if w not in self.LangConstructs:
                 self.LangConstructs[w] = BvConstructs(Vars = [], Arithms = [], Comps = [], Consts = [], Concats = [], Extracts = [], Rotates = [], Exts = [], Unary = [])
-            print (v,'width=',w)
-            self.LangConstructs[w].Vars.append(v.symbol_name())
-            print (self.LangConstructs[w].Vars)
+            #print (v,'width=',w)
+            self.LangConstructs[w].Vars.append(sanitize_name( v.symbol_name()))
+            #print (self.LangConstructs[w].Vars)
 
         print (opextract.BvUnary)
         print (opextract.BvOps)
@@ -353,24 +360,24 @@ class SyGusQueryGen:
 
     def _gen_Fminus2_Tr_imply_constraint(self): #
         template = '(constraint (=> (and (Fminus2 {argV}) (Tr {argV} {argP}) (INV {argInvV})) (INV {argInvP})))'
-        argv = ' '.join([v.symbol_name()+'V' for v in self.allvars])
-        argp = ' '.join([v.symbol_name()+'P' for v in self.allvars])
-        arginvv = ' '.join([v.symbol_name()+'V' for v in self.ordered_vars])
-        arginvp = ' '.join([v.symbol_name()+'P' for v in self.ordered_vars])
+        argv = ' '.join([sanitize_name(v.symbol_name()+'V') for v in self.allvars])
+        argp = ' '.join([sanitize_name(v.symbol_name()+'P') for v in self.allvars])
+        arginvv = ' '.join([sanitize_name(v.symbol_name()+'V') for v in self.ordered_vars])
+        arginvp = ' '.join([sanitize_name(v.symbol_name()+'P') for v in self.ordered_vars])
         return template.format(argV = argv, argP = argp, argInvV = arginvv, argInvP = arginvp)
 
     def _gen_Init_imply_constraint(self): #
         template = '(constraint (=> (Init {argV}) (INV {argInvV})))'
-        argv = ' '.join([v.symbol_name()+'V' for v in self.allvars])
-        arginvv = ' '.join([v.symbol_name()+'V' for v in self.ordered_vars])
+        argv = ' '.join([sanitize_name(v.symbol_name()+'V') for v in self.allvars])
+        arginvv = ' '.join([sanitize_name(v.symbol_name()+'V') for v in self.ordered_vars])
         return template.format(argV = argv, argInvV = arginvv)
 
 
     def _gen_Fminus2_imply_constraint(self): #
         template = '(constraint (=> (Fminus2 {argP}) (INV {argInvP})))'
-        argv = ' '.join([v.symbol_name()+'V' for v in self.allvars])
-        argp = ' '.join([v.symbol_name()+'P' for v in self.allvars])
-        arginvp = ' '.join([v.symbol_name()+'P' for v in self.ordered_vars])
+        argv = ' '.join([sanitize_name(v.symbol_name()+'V') for v in self.allvars])
+        argp = ' '.join([sanitize_name(v.symbol_name()+'P') for v in self.allvars])
+        arginvp = ' '.join([sanitize_name(v.symbol_name()+'P') for v in self.ordered_vars])
         return template.format(argV = argv, argP = argp, argInvP = arginvp)
 
     def _gen_f_minus_2(self): # -> f_minus_2_stx
@@ -395,7 +402,7 @@ class SyGusQueryGen:
                     if Config_expand_values:
                         assert (False) # TODO: not implemented, probably not needed
                     else:
-                        statement += ' ' + v.symbol_name()+'V'  # we expect it to be forall
+                        statement += ' ' + sanitize_name(v.symbol_name()+'V')  # we expect it to be forall
             statement += ')))'
             blocks_stx.append(statement)
         return '\n'.join(blocks_stx)
@@ -411,7 +418,7 @@ class SyGusQueryGen:
                     if Config_expand_values:
                         assert (False) # TODO: not implemented, probably not needed
                     else:
-                        statement += ' ' + v.symbol_name()+'V'  # we expect it to be forall
+                        statement += ' ' + sanitize_name(v.symbol_name()+'V')  # we expect it to be forall
 
                         # alert 
                         print ('Warning: expand V for facts')
@@ -468,7 +475,7 @@ class SyGusQueryGen:
 
             evcs += '))\n'
 
-            print (constr.Vars)
+            #print (constr.Vars)
             if constr.Vars:
                 evcs += ('(V%d' % width) + ' ' + tp + ' ('
                 evcs += ' '.join(constr.Vars) ## TODO: DEAL WITH UNDERSCORE!!!

@@ -184,6 +184,7 @@ class BTOR2Parser:
         # for btor, the condition is always True
         ftrans = []
         nxt_node_set = set() # set of int, to rule out them in the check
+        output_node_set = set()
         initlist = []
         invarlist = []
 
@@ -196,6 +197,7 @@ class BTOR2Parser:
             strinput = strinput.replace(sc, rep)
 
         def getnode(nid):
+            assert(nid not in  output_node_set)
             node_covered.add(nid)
             if int(nid) < 0:
                 return Ite(BV2B(nodemap[str(-int(nid))]), BV(0,1), BV(1,1))
@@ -281,6 +283,7 @@ class BTOR2Parser:
                         nodemap[nid] = Symbol(sname, getnode(nids[0]))
                     else:
                         nodemap[nid] = Symbol((SN%nid), getnode(nids[0]))
+                        print ('Warning: has unnamed state!')
                 ts.add_state_var(nodemap[nid])
 
             if ntype == INPUT:
@@ -288,6 +291,7 @@ class BTOR2Parser:
                     nodemap[nid] = Symbol(nids[1], getnode(nids[0]))
                 else:
                     nodemap[nid] = Symbol((SN%nid), getnode(nids[0]))
+                    print ('Warning: has unnamed input!')
                 ts.add_input_var(nodemap[nid])
 
             if ntype == OUTPUT:
@@ -295,12 +299,15 @@ class BTOR2Parser:
                     # unfortunately we need to create an extra symbol just to have the output name
                     # we could be smarter about this, but then this parser can't be greedy
                     # hz note: here I fix it
-                    original_symbol = B2BV(getnode(nids[0]))
-                    output_symbol = Symbol(nids[1], original_symbol.get_type())
-                    nodemap[nid] = EqualsOrIff(output_symbol, original_symbol)
-                    invarlist.append(nodemap[nid])
-                    node_covered.add(nid)
-                    ts.add_output_var(output_symbol)
+                    print ('Warning: ignore output: ', nids[1])
+                    output_node_set.add(nid)
+                    # print (nids)
+                    # original_symbol = B2BV(getnode(nids[0]))
+                    # output_symbol = Symbol(nids[1], original_symbol.get_type())
+                    # nodemap[nid] = EqualsOrIff(output_symbol, original_symbol)
+                    # invarlist.append(nodemap[nid])
+                    # node_covered.add(nid)
+                    # ts.add_output_var(output_symbol)
 
             if ntype == AND:
                 nodemap[nid] = binary_op(BVAnd, And, getnode(nids[1]), getnode(nids[2]))
@@ -461,7 +468,10 @@ class BTOR2Parser:
 
         if Config_Warning: #TODO: fix the warning!
             name = lambda x: str(nodemap[x]) if nodemap[x].is_symbol() else x
-            uncovered = [name(x) for x in nodemap if x not in node_covered and x not in nxt_node_set]
+            uncovered = [name(x) for x in nodemap if\
+                x not in node_covered and \
+                x not in nxt_node_set and \
+                x not in output_node_set]
             uncovered.sort()
             if len(uncovered) > 0:
                 print("Unlinked nodes \"%s\""%",".join(uncovered))

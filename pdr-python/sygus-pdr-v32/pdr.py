@@ -22,6 +22,7 @@ Config_debug = True
 Config_debug_print = True
 Config_simplify_itp = True
 Config_rm_cex_in_prev = True
+Config_use_sygus = True
 #----------- Heuristics -------------------
 Config_enhance_giveup_threshold = (2, 3) # (8,10)
 Config_cex_invalid_itp_guess_threshold = (4,5) # (18, 20)
@@ -123,7 +124,7 @@ class Lemma(object):
         fc._add_lemma(lemma = self.direct_push(), fidx=src_fidx+1)
         # prop_succ = True from this point
         # try block all lemmas on the current frame
-        for l in fc.frames[src_fidx]:
+        for l in fc.frames.get(src_fidx,[]):
             # try push once to get prev_cex
             prev_ex, _, _ = \
                 pdr.solveTrans(prevF=pdr.frame_prop_list(src_fidx) + fc.frame_prop_list(src_fidx), 
@@ -268,7 +269,7 @@ class PDR(object):
         self.valid_solver = self.solver # we can use btor later 
         self.itp_solver = Interpolator(logic=QF_BV)
 
-        self.unblockable_fact = {} # <n, ex> : n -> list of ex, unblocked, used to syn
+        self.unblockable_fact = {} # <n, [ex]> : n -> list of ex, unblocked, used to syn
 
         self.frames_pushed_idxs_map = {} # n->idx+1 tried
         self.facts_pushed_idxs_map = {} # n->idx+1 tried
@@ -432,9 +433,9 @@ class PDR(object):
     # *** END OF _add_pushed_lemma ***   
     def _add_fact(self,fact, fidx):
         if fidx not in self.unblockable_fact:
-            self.unblockable_fact[fidx] = set()
+            self.unblockable_fact[fidx] = []
         assert fact not in self.unblockable_fact[fidx]
-        self.unblockable_fact[fidx].add(fact)
+        self.unblockable_fact[fidx].append(fact)
     
     #----------- TRANS - related  -------------------
 
@@ -504,7 +505,7 @@ class PDR(object):
         """Extracts a reachable state that intersects the negation
         of the property and the last current frame"""
         assert (idx >= 0)
-        print ('    [F%d -> prop]' % idx)
+        debug ('    [F%d -> prop]' % idx)
         md, _ , _ = self.solveTrans(self.frame_prop_list(idx), \
             T = self.system.trans, prop = prop, \
             init = self.system.init if use_init else None,
@@ -519,11 +520,11 @@ class PDR(object):
         assert isinstance(cex_origin, str )
 
         priorityQueue = []
-        print ('      [block] Try @F%d' % idx, print_cube(cube) )
+        debug ('      [block] Try @F%d' % idx, print_cube(cube) )
 
         prop = _cube2prop(cube)
         if self.frame_implies(idx, prop):
-            print ('      [block] already blocked by F%d' % idx)
+            debug ('      [block] already blocked by F%d' % idx)
             return True
 
         heapq.heappush(priorityQueue, (idx, cube))
@@ -534,18 +535,18 @@ class PDR(object):
                 model_init_frame = self.solve( \
                     [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex])
                 assert (model_init_frame is not None)
-                print ('      [block] CEX found!')
+                debug ('      [block] CEX found!')
                 return False
 
             prop = _cube2prop(cex) #Not(And([EqualsOrIff(v,val) for v,val in cex]))
             
             # Question: too old itp? useful or not?
             # push on older frames also? for new ITP?
-            print ('      [block] check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
+            debug ('      [block] check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
             #if Config_rm_cex_in_prev:
             #    if (self.solve( \
             #            [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]) is not None):
-            #        print ('      [block] CEX is reachable -- direct init!')
+            #        debug ('      [block] CEX is reachable -- direct init!')
             #        return False
             
             model, _, itp = self.solveTrans(self.frame_prop_list(fidx-1) + ([prop] if Config_rm_cex_in_prev else []), \
@@ -561,9 +562,9 @@ class PDR(object):
                 heapq.heappop(priorityQueue) # pop this cex
             else:
                 # model is not None
-                print ('      [block] push to queue, F%d' % (fidx-1), print_cube(model))
+                debug ('      [block] push to queue, F%d' % (fidx-1), print_cube(model))
                 heapq.heappush(priorityQueue, (fidx-1, model))
-        print ('      [block] Succeed, return.')
+        debug ('      [block] Succeed, return.')
         return True
     # *** END OF do_recursive_block ***
 
@@ -571,12 +572,12 @@ class PDR(object):
         assert isinstance(cex_origin, str )
 
         priorityQueue = []
-        print ('      [block] Try @F%d' % idx, print_cube(cube) )
+        debug ('      [block] Try @F%d' % idx, print_cube(cube) )
 
         prop = _cube2prop(cube)
 
         if self.is_valid(Implies(And(self.frame_prop_list(idx) + frame_cache.frame_prop_list(idx)), prop)):
-            print ('      [block] already blocked by F%d' % idx)
+            debug ('      [block] already blocked by F%d' % idx)
             return True
 
         heapq.heappush(priorityQueue, (idx, cube))
@@ -587,14 +588,14 @@ class PDR(object):
                 model_init_frame = self.solve( \
                     [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex])
                 assert (model_init_frame is not None)
-                print ('      [block] CEX found!')
+                debug ('      [block] CEX found!')
                 return False
 
             prop = _cube2prop(cex) #Not(And([EqualsOrIff(v,val) for v,val in cex]))
             
             # Question: too old itp? useful or not?
             # push on older frames also? for new ITP?
-            print ('      [block] check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
+            debug ('      [block] check at F%d -> F%d : ' % (fidx-1, fidx), str(prop)  )
             #if Config_rm_cex_in_prev:
             #    if (self.solve( \
             #            [self.system.init] +  [EqualsOrIff(v,val) for v,val in cex]) is not None):
@@ -617,9 +618,9 @@ class PDR(object):
                 heapq.heappop(priorityQueue) # pop this cex
             else:
                 # model is not None
-                print ('      [block] push to queue, F%d' % (fidx-1), print_cube(model))
+                debug ('      [block] push to queue, F%d' % (fidx-1), print_cube(model))
                 heapq.heappush(priorityQueue, (fidx-1, model))
-        print ('      [block] Succeed, return.')
+        debug ('      [block] Succeed, return.')
         return True
     # *** END OF try_recursive_block ***
 
@@ -656,7 +657,8 @@ class PDR(object):
         while True:
             self.sanity_check_frame_monotone()
             self.sanity_check_imply()
-            self.dump_frames()
+            if Config_debug_print:
+                self.dump_frames()
             print ('Total Frames: %d, L %d ' %( len(self.frames) , len(self.frames[-1])))
             pause ()
 
@@ -664,7 +666,7 @@ class PDR(object):
             cube = self.get_bad_state_from_property_invalid_after_trans( \
                 prop = prop, idx = len(self.frames)-1, use_init = False, remove_vars = remove_vars, keep_vars = keep_vars)
 
-            print ('[Checking property] Get cube: ', cube , ' @F%d' % (len(self.frames)-1))
+            debug ('[Checking property] Get cube: ', cube , ' @F%d' % (len(self.frames)-1))
             # cube is list of (var, assignments)
             if cube is not None:
                 # Blocking phase of a bad state
@@ -672,7 +674,7 @@ class PDR(object):
                     print("[Checking property] Bug found at step %d" % (len(self.frames)))
                     return False
                 else:
-                    print("[Checking property] Cube blocked '%s'" % print_cube(cube))
+                    debug("[Checking property] Cube blocked '%s'" % print_cube(cube))
             else:
                 # Checking if the last two frames are equivalent i.e., are inductive
                 if self.is_last_two_frames_inductive():
@@ -723,7 +725,7 @@ class PDR(object):
             lemma : Lemma = self.frames[fidx][lemmaIdx]
             if lemma.pushed:
                 continue
-            print ('  [push_lemma F%d] Try pushing lemma l%d to F%d: ' % (fidx, lemmaIdx, fidx+1) , (lemma.serialize()))
+            debug ('  [push_lemma F%d] Try pushing lemma l%d to F%d: ' % (fidx, lemmaIdx, fidx+1) , (lemma.serialize()))
 
             prev_ex, post_ex, _ = \
                 self.solveTrans(prevF=self.frame_prop_list(fidx), 
@@ -735,7 +737,7 @@ class PDR(object):
             if prev_ex is None: # post_ex should be none also
                 # push is successful
                 assert (post_ex is None)
-                print ('  [push_lemma F%d] Succeed in pushing l%d!'%(fidx, lemmaIdx))
+                debug ('  [push_lemma F%d] Succeed in pushing l%d!'%(fidx, lemmaIdx))
                 self._add_lemma(lemma.direct_push(), fidx = fidx+1) # together with its cex
             else: # there is a failing model
                 # store if temporarily and we will decide how to deal with them
@@ -746,7 +748,7 @@ class PDR(object):
         # 2. handled unpushed lemmas
         for lemmaIdx, lemma, prev_ex, post_ex in unpushed_lemmas:
             if len(lemma.cex) == 0:
-                print ('  [push_lemma F%d] will give up on lemma as it blocks None, '%(fidx), 'l'+str(lemmaIdx)+':',  lemma.serialize())
+                debug ('  [push_lemma F%d] will give up on lemma as it blocks None, '%(fidx), 'l'+str(lemmaIdx)+':',  lemma.serialize())
                 continue
             # 2.1 if subsume, then we don't need to worry about
             if lemma.subsume_by_frame(fidx = fidx + 1, pdr = self): #should not touch frames in pdr
@@ -759,42 +761,47 @@ class PDR(object):
             if cex_failed:
                 assert (itp is None)
                 # not pushable 
-                print ('  [push_lemma F%d] skip r-block l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' as its cex cannot be pushed.')
+                debug ('  [push_lemma F%d] skip r-block l%d :'%(fidx, lemmaIdx) , lemma.serialize(), ' as its cex cannot be pushed.')
                 continue
             
-            print ('  [push_lemma F%d] try sygus repair l%d :'%(fidx, lemmaIdx) , lemma.serialize())
+            debug ('  [push_lemma F%d] try sygus repair l%d :'%(fidx, lemmaIdx) , lemma.serialize())
             # 2.3 sygus repair
-            sygus_hint:Lemma = lemma._try_sygus_repair(fidx=fidx,\
-                lemmaIdx=lemmaIdx, post_ex=post_ex, new_itp=itp, pdr=self,\
-                remove_vars=remove_vars, keep_vars=keep_vars) # should not touch frames in pdr
+            if Config_use_sygus:
+                sygus_hint:Lemma = lemma._try_sygus_repair(fidx=fidx,\
+                    lemmaIdx=lemmaIdx, post_ex=post_ex, new_itp=itp, pdr=self,\
+                    remove_vars=remove_vars, keep_vars=keep_vars) # should not touch frames in pdr
+            else:
+                sygus_hint = None
             if sygus_hint is not None:
                 # succeed in repair
                 self._add_lemma(lemma = sygus_hint, fidx = fidx+1)
                 self._add_pushed_lemma(lemma = sygus_hint, start = 1, end = fidx)
-                print ('  [push_lemma F%d] repair l%d :'%(fidx, lemmaIdx) , lemma.serialize())
-                print ('  [push_lemma F%d] get l%d :'%(fidx, lemmaIdx) , sygus_hint.serialize())
+                debug ('  [push_lemma F%d] repair l%d :'%(fidx, lemmaIdx) , lemma.serialize())
+                debug ('  [push_lemma F%d] get l%d :'%(fidx, lemmaIdx) , sygus_hint.serialize())
                 continue
 
             # 2.4 try contraction 
+            debug ('  [push_lemma F%d] try strengthening l%d :'%(fidx, lemmaIdx) , lemma.serialize())
+            pause()
             strengthen_fc = FrameCache() # self as an fc also, but the solver etc also
             prop_succ, all_succ, rmBnd, unblockable_cube = lemma.try_strengthen(\
                 fc = strengthen_fc, bnd = Config_strengthen_effort_for_prop, src_fidx = fidx, pdr = self, prev_ex=prev_ex,
                 remove_vars=remove_vars,keep_vars=keep_vars)
             # full/prop itself/bad_state
             if all_succ or prop_succ:
-                print ('  [push_lemma F%d] strengthened l%d :'%(fidx, lemmaIdx) , lemma.serialize(), " with extra lemma, ", 'A' if all_succ else 'P')
+                debug ('  [push_lemma F%d] strengthened l%d :'%(fidx, lemmaIdx) , lemma.serialize(), " with extra lemma, ", 'A' if all_succ else 'P')
                 self.merge_frame_cache(strengthen_fc)
                 continue
 
             if (unblockable_cube is not None) and (rmBnd >= 0):
                 self._add_fact(fact = unblockable_cube, fidx = fidx)
-            
-            assert (rmBnd < 0) # bound limit reached
+            else:    
+                assert (rmBnd < 0) # bound limit reached
 
             # try strengthen, but unable to even strengthen the main prop in
             # the given time
-            print ('  [push_lemma F%d] unable to push l%d :'%(fidx, lemmaIdx) , lemma.serialize())
-            print ('  [push_lemma F%d] use new itp l%d :'%(fidx, lemmaIdx), itp.serialize())
+            debug ('  [push_lemma F%d] unable to push l%d :'%(fidx, lemmaIdx) , lemma.serialize())
+            debug ('  [push_lemma F%d] use new itp l%d :'%(fidx, lemmaIdx), itp.serialize())
             self.merge_frame_cache(itp_fc)
 
             # get its recursive blocked

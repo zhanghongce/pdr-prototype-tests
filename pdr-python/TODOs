@@ -23,3 +23,13 @@
 - lemma status tracking
 
 - test other designs (SP, vdp)
+
+- var set decisions () --> sp/aes
+- assumptions
+- debug INT BV interpolant?
+- break : dump itp
+- push summary
+- srem
+- neg p on each frame
+- block cex 's sygus
+- module name etc: only leaves those with "m1."
