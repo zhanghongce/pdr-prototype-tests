@@ -24,12 +24,14 @@
 
 - test other designs (SP, vdp)
 
+- var set heuristics (!!!)
+- sygus-stream (!!!)
 - var set decisions () --> sp/aes
 - assumptions
 - debug INT BV interpolant?
-- break : dump itp
+- break : dump frame
 - push summary
 - srem
 - neg p on each frame
 - block cex 's sygus
-- module name etc: only leaves those with "m1."
+* module name etc: only leaves those with "m1."

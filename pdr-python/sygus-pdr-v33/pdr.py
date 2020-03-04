@@ -1,10 +1,12 @@
+
+from pysmt.fnode import FNode
 from pysmt.shortcuts import Symbol, Not, And, Or, Implies, Ite, BVAdd, BV, EqualsOrIff, BVNot, BVSub
 from pysmt.shortcuts import is_sat, is_unsat, Solver, TRUE
 from pysmt.typing import BOOL, BVType
 from pysmt.shortcuts import Interpolator, simplify
 from pysmt.logics import QF_BV
 # Type annotation
-from typing import Sequence, Callable, Mapping
+from typing import Sequence, Callable, Mapping, Tuple
 
 from utilfunc import _get_var, _get_cubes_with_more_var, _get_cubes_with_fewer_var
 from cegpbe import CexGuidedPBE
@@ -57,7 +59,7 @@ class Lemma(object):
         cex_str = [(v.symbol_name(), val) for v, val in cex ]
         return tuple(sorted(cex_str, key = lambda x: x[0]))
 
-    def __init__(self, expr, cex, origin):
+    def __init__(self, expr:FNode, cex:Sequence[Sequence[Tuple(FNode,FNode)]], origin:str):
         # cex should be a set
         assert (isinstance(cex, list))
         self.expr = expr
@@ -74,7 +76,7 @@ class Lemma(object):
         self.itp_push_fail = (self.itp_push_fail[0]+(1 if failed else 0),self.itp_push_fail[1]+1)
     def stats_sygus_fail(self,failed : bool):
         self.itp_enhance_fail = (self.itp_enhance_fail[0]+(1 if failed else 0),self.itp_enhance_fail[1]+1)
-    def direct_push(self): # -> Lemma:
+    def direct_push(self) -> "Lemma": # -> Lemma:
         self.pushed = True
         ret = Lemma(expr = self.expr, cex = self.cex, origin = self.origin)
         self.stats_push_fail(False)
@@ -276,24 +278,24 @@ class PDR(object):
 
 
     #----------- SOLVING PRIMITIVES -------------------
-    def is_valid(self, prop) -> bool:
+    def is_valid(self, prop:FNode) -> bool:
         """returns True for valid property, prop : a single formula """
         if self.valid_solver.solve([Not(prop)]):
             return False
         return True
-    def is_sat(self, prop) -> bool:
+    def is_sat(self, prop:FNode) -> bool:
         """returns True for valid property, prop : a single formula """
         if self.valid_solver.solve([prop]):
             return True
         return False
     # *** END OF is_valid ***
-    def get_not_valid_model(self, prop):
+    def get_not_valid_model(self, prop:FNode):
         if self.valid_solver.solve([Not(prop)]):
             return self.valid_solver.get_model()
         return None
     # *** END OF get_not_valid_model ***
 
-    def solve(self, formula, remove_vars = [], keep_vars = None):
+    def solve(self, formula:Sequence[FNode], remove_vars = [], keep_vars = None):
         """Provides a satisfiable assignment to the state 
         variables that are consistent with the input formula,
         formula : property or a list of property
@@ -318,9 +320,9 @@ class PDR(object):
     # *** END OF solve ***
 
     #----------- FRAME to Properties -------------------
-    def frame_prop_list(self, fidx):
+    def frame_prop_list(self, fidx:int):
         return [l.expr for l in self.frames[fidx]]
-    def frame_prop(self, fidx): # all prop
+    def frame_prop(self, fidx:int): # all prop
         return And([l.expr for l in self.frames[fidx]])
     def frame_prop_select(self, fidx, selector : Callable[[int],bool]): # which to keep
         return [l.expr for lidx,l in enumerate(self.frames[fidx]) if  selector(lidx) ]
@@ -328,14 +330,14 @@ class PDR(object):
         return self.frame_prop(fidx = -1)
     def get_inv_str(self):
         return simplify(self.frame_prop(fidx = -1)).serialize()
-    def frame_implies(self, fidx, prop):
+    def frame_implies(self, fidx:int, prop:FNode):
         if self.is_valid(Implies(self.frame_prop(fidx), prop)):
             return True
         return False
-    def frame_not_implies_model(self, fidx, prop):
+    def frame_not_implies_model(self, fidx:int, prop:FNode):
         return self.get_not_valid_model(Implies(self.frame_prop(fidx), prop))
 
-    def frame_compatible_w(self, fidx, prop):
+    def frame_compatible_w(self, fidx:int, prop:FNode):
         if self.is_sat(And(self.frame_prop_list(fidx) + [prop])):
             return True
         return False
@@ -348,7 +350,7 @@ class PDR(object):
                 return True
         return False
         
-    def sanity_check_safe_inductive_inv(self, prop ):
+    def sanity_check_safe_inductive_inv(self, prop:FNode ):
         T = self.system.trans
         inv = self.get_inv()
         inv_prime = inv.substitute(self.prime_map)
@@ -419,19 +421,19 @@ class PDR(object):
 
     #----------- FRAME HANDLing  -------------------
 
-    def _add_lemma(self, lemma, fidx):
+    def _add_lemma(self, lemma:Lemma, fidx:int):
         if fidx == len(self.frames):
             self.frames[fidx].append([])
         assert fidx < len(self.frames)
         self.frames[fidx].append(lemma)
     # *** END OF _add_lemma ***
-    def _add_pushed_lemma(self, lemma : Lemma, start, end):
+    def _add_pushed_lemma(self, lemma : Lemma, start:int, end:int):
         l_prev = lemma.copy()
         l_prev.pushed = True
         for fidx in range(start,end+1):
             self._add_lemma(lemma = l_prev, fidx = fidx)
     # *** END OF _add_pushed_lemma ***   
-    def _add_fact(self,fact, fidx):
+    def _add_fact(self,fact:Sequence[Tuple[FNode,FNode]], fidx):
         if fidx not in self.unblockable_fact:
             self.unblockable_fact[fidx] = []
         assert fact not in self.unblockable_fact[fidx]
@@ -644,7 +646,7 @@ class PDR(object):
         return False
     # *** END OF check_init_failed ***
 
-    def check_property(self, prop, remove_vars = [], keep_vars = None, var_keep_func = None):
+    def check_property(self, prop, remove_vars = [], keep_vars = None):
         """Property Directed Reachability approach without optimizations."""
         print("[Checking property] Property: %s." % prop)
 
